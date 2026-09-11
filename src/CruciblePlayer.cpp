@@ -1,8 +1,11 @@
 #include "CrucibleSystem.h"
 
+#include "DatabaseEnv.h"
 #include "Item.h"
 #include "Log.h"
 #include "ObjectGuid.h"
+#include "ObjectMgr.h"
+#include "ItemTemplate.h"
 #include "Player.h"
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
@@ -21,6 +24,9 @@ namespace
     constexpr std::string_view ABSORB_COMMAND = "ABSORB";
     constexpr std::string_view PREVIEW_COMMAND = "PREVIEW";
     constexpr std::string_view STATS_COMMAND = "STATS";
+    constexpr std::string_view ESSENCES_COMMAND = "ESSENCES";
+    constexpr std::string_view MASTERY_PREVIEW_COMMAND = "MASTERY_PREVIEW";
+    constexpr std::string_view MASTERY_UPGRADE_COMMAND = "MASTERY_UPGRADE";
 
     bool TryParseCrucibleAddonMessage(
         std::string const& msg,
@@ -232,6 +238,185 @@ namespace
 
         player->Whisper("CRUCIBLE\tSTATS_END", LANG_ADDON, player);
     }
+
+    void SendCrucibleEssencesBegin(Player* player)
+    {
+        if (!player)
+            return;
+
+        player->Whisper("CRUCIBLE\tESSENCES_BEGIN", LANG_ADDON, player);
+    }
+
+    void SendCrucibleEssenceRow(Player* player, uint32 itemEntry, uint32 masteryPercent)
+    {
+        if (!player)
+            return;
+
+        std::string message = fmt::format(
+            "CRUCIBLE\tESSENCE_ROW\t{}\t{}",
+            itemEntry,
+            masteryPercent);
+
+        player->Whisper(message, LANG_ADDON, player);
+    }
+
+    void SendCrucibleEssencesEnd(Player* player)
+    {
+        if (!player)
+            return;
+
+        player->Whisper("CRUCIBLE\tESSENCES_END", LANG_ADDON, player);
+    }
+
+    char const* GetMasteryUpgradeResultName(Crucible::MasteryUpgradeResult result)
+    {
+        switch (result)
+        {
+            case Crucible::MasteryUpgradeResult::SUCCESS: return "SUCCESS";
+            case Crucible::MasteryUpgradeResult::INVALID_ARGUMENT: return "INVALID_ARGUMENT";
+            case Crucible::MasteryUpgradeResult::ESSENCE_NOT_FOUND: return "ESSENCE_NOT_FOUND";
+            case Crucible::MasteryUpgradeResult::INVALID_MASTERY_STATE: return "INVALID_MASTERY_STATE";
+            case Crucible::MasteryUpgradeResult::UNSUPPORTED_BRACKET: return "UNSUPPORTED_BRACKET";
+            case Crucible::MasteryUpgradeResult::NOT_ENOUGH_MONEY: return "NOT_ENOUGH_MONEY";
+            case Crucible::MasteryUpgradeResult::NOT_ENOUGH_REAGENT: return "NOT_ENOUGH_REAGENT";
+        }
+
+        return "UNKNOWN";
+    }
+
+    bool TryParseItemEntry(std::string_view text, uint32& itemEntry)
+    {
+        itemEntry = 0;
+        if (text.empty())
+            return false;
+
+        const char* begin = text.data();
+        const char* end = text.data() + text.size();
+        const auto result = std::from_chars(begin, end, itemEntry, 10);
+
+        return result.ec == std::errc{} && result.ptr == end && itemEntry != 0;
+    }
+
+    void SendMasteryPreview(Player* player, uint32 itemEntry)
+    {
+        if (!player)
+            return;
+
+        const uint32 guid = player->GetGUID().GetCounter();
+
+        QueryResult masteryResult = CharacterDatabase.Query(
+            "SELECT mastery_percent "
+            "FROM character_crucible_absorption "
+            "WHERE guid = {} AND item_entry = {} LIMIT 1",
+            guid,
+            itemEntry
+        );
+
+        if (!masteryResult)
+        {
+            player->Whisper(
+                fmt::format("CRUCIBLE\tMASTERY_BEGIN\t{}\tESSENCE_NOT_FOUND", itemEntry),
+                LANG_ADDON,
+                player);
+            player->Whisper(
+                fmt::format("CRUCIBLE\tMASTERY_END\t{}", itemEntry),
+                LANG_ADDON,
+                player);
+            return;
+        }
+
+        const uint32 currentMastery = masteryResult->Fetch()[0].Get<uint32>();
+        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemEntry);
+
+        if (!proto)
+        {
+            player->Whisper(
+                fmt::format("CRUCIBLE\tMASTERY_BEGIN\t{}\tINVALID_ARGUMENT", itemEntry),
+                LANG_ADDON,
+                player);
+            player->Whisper(
+                fmt::format("CRUCIBLE\tMASTERY_END\t{}", itemEntry),
+                LANG_ADDON,
+                player);
+            return;
+        }
+
+        Crucible::MasteryCost cost;
+        const bool hasNext =
+            Crucible::GetMasteryUpgradeCost(proto, currentMastery, cost);
+
+        if (!hasNext)
+        {
+            const char* state =
+                currentMastery == 100 ? "MAX_MASTERY" : "UNSUPPORTED_BRACKET";
+
+            player->Whisper(
+                fmt::format(
+                    "CRUCIBLE\tMASTERY_BEGIN\t{}\t{}\t{}\t0\t0\t0\t0",
+                    itemEntry,
+                    state,
+                    currentMastery),
+                LANG_ADDON,
+                player);
+            player->Whisper(
+                fmt::format("CRUCIBLE\tMASTERY_END\t{}", itemEntry),
+                LANG_ADDON,
+                player);
+            return;
+        }
+
+        player->Whisper(
+            fmt::format(
+                "CRUCIBLE\tMASTERY_BEGIN\t{}\tSUCCESS\t{}\t{}\t{}\t{}\t{}",
+                itemEntry,
+                currentMastery,
+                cost.NextMastery,
+                cost.MoneyCopper,
+                cost.ReagentEntry,
+                cost.ReagentCount),
+            LANG_ADDON,
+            player);
+
+        QueryResult contributionResult = CharacterDatabase.Query(
+            "SELECT stat_id, absorbed_value "
+            "FROM character_crucible_contribution "
+            "WHERE guid = {} AND item_entry = {} "
+            "ORDER BY stat_id",
+            guid,
+            itemEntry
+        );
+
+        if (contributionResult)
+        {
+            const float scale =
+                static_cast<float>(cost.NextMastery) /
+                static_cast<float>(currentMastery);
+
+            do
+            {
+                Field* fields = contributionResult->Fetch();
+                const Crucible::StatId stat =
+                    static_cast<Crucible::StatId>(fields[0].Get<uint16>());
+                const float currentValue = fields[1].Get<float>();
+                const float delta = currentValue * (scale - 1.0f);
+
+                player->Whisper(
+                    fmt::format(
+                        "CRUCIBLE\tMASTERY_STAT\t{}\t{}\t{:.4f}",
+                        itemEntry,
+                        Crucible::GetStatName(stat),
+                        delta),
+                    LANG_ADDON,
+                    player);
+            }
+            while (contributionResult->NextRow());
+        }
+
+        player->Whisper(
+            fmt::format("CRUCIBLE\tMASTERY_END\t{}", itemEntry),
+            LANG_ADDON,
+            player);
+    }
 }
 
 class CruciblePlayerScript : public PlayerScript
@@ -327,6 +512,86 @@ public:
                 SendCrucibleStatsRow(player, stat);
 
             SendCrucibleStatsEnd(player);
+            return;
+        }
+
+        if (command == ESSENCES_COMMAND)
+        {
+            const uint32 guid = player->GetGUID().GetCounter();
+
+            QueryResult result = CharacterDatabase.Query(
+                "SELECT item_entry, mastery_percent "
+                "FROM character_crucible_absorption "
+                "WHERE guid = {} "
+                "ORDER BY item_entry",
+                guid
+            );
+
+            uint32 count = 0;
+            SendCrucibleEssencesBegin(player);
+
+            if (result)
+            {
+                do
+                {
+                    Field* fields = result->Fetch();
+                    const uint32 itemEntry = fields[0].Get<uint32>();
+                    const uint32 masteryPercent = fields[1].Get<uint32>();
+
+                    SendCrucibleEssenceRow(player, itemEntry, masteryPercent);
+                    ++count;
+                }
+                while (result->NextRow());
+            }
+
+            SendCrucibleEssencesEnd(player);
+
+            LOG_INFO(
+                "module.crucible",
+                "Crucible ESSENCES: player='{}' essences={}",
+                player->GetName(),
+                count);
+
+            return;
+        }
+
+        if (command == MASTERY_PREVIEW_COMMAND)
+        {
+            uint32 itemEntry = 0;
+            if (!TryParseItemEntry(argument, itemEntry))
+            {
+                LOG_INFO(
+                    "module.crucible",
+                    "Crucible MASTERY_PREVIEW: player='{}' invalid item entry='{}'",
+                    player->GetName(),
+                    argument);
+                return;
+            }
+
+            SendMasteryPreview(player, itemEntry);
+            return;
+        }
+
+        if (command == MASTERY_UPGRADE_COMMAND)
+        {
+            uint32 itemEntry = 0;
+            if (!TryParseItemEntry(argument, itemEntry))
+                return;
+
+            Crucible::MasteryUpgradeResult result =
+                Crucible::UpgradeMastery(player, itemEntry);
+
+            player->Whisper(
+                fmt::format(
+                    "CRUCIBLE\tMASTERY_RESULT\t{}\t{}",
+                    itemEntry,
+                    GetMasteryUpgradeResultName(result)),
+                LANG_ADDON,
+                player);
+
+            if (result == Crucible::MasteryUpgradeResult::SUCCESS)
+                SendMasteryPreview(player, itemEntry);
+
             return;
         }
 

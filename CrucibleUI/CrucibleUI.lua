@@ -13,6 +13,23 @@ local previewStats = {}
 local statsReceiving = false
 local statsRows = {}
 
+local essencesReceiving = false
+local essenceRows = {}
+local essenceFilterMastery = 0
+local essenceSearchText = ""
+local essenceDisplayRows = {}
+
+local selectedEssenceEntry = nil
+local masteryPreviewEntry = nil
+local masteryPreviewResult = nil
+local masteryCurrent = nil
+local masteryNext = nil
+local masteryMoney = 0
+local masteryReagentEntry = 0
+local masteryReagentCount = 0
+local masteryStats = {}
+local masteryUpgradePending = false
+
 local function MakeBagLocation(bag, slot)
     return { bagID = bag, slotIndex = slot }
 end
@@ -69,7 +86,7 @@ end
 hooksecurefunc("PickupContainerItem", CapturePickup)
 
 local frame = CreateFrame("Frame", "CrucibleFrame", UIParent)
-frame:SetWidth(420)
+frame:SetWidth(720)
 frame:SetHeight(380)
 frame:SetPoint("CENTER", UIParent, "CENTER", 0, 30)
 frame:SetFrameStrata("DIALOG")
@@ -96,7 +113,7 @@ local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
 closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -5)
 
 local instruction = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-instruction:SetPoint("TOP", frame, "TOP", 0, -52)
+instruction:SetPoint("TOP", frame, "TOP", 150, -52)
 instruction:SetText("Drag an item here")
 
 local slot = CreateFrame("Button", "CrucibleItemSlot", frame)
@@ -119,7 +136,7 @@ nameText:SetWidth(350)
 nameText:SetText("No item selected")
 
 local previewTitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-previewTitle:SetPoint("TOPLEFT", frame, "TOPLEFT", 42, -192)
+previewTitle:SetPoint("TOPLEFT", frame, "TOPLEFT", 342, -192)
 previewTitle:SetText("If absorbed:")
 
 local previewText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -130,14 +147,14 @@ previewText:SetJustifyV("TOP")
 previewText:SetText("")
 
 local statusText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-statusText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 56)
+statusText:SetPoint("BOTTOM", frame, "BOTTOM", 150, 56)
 statusText:SetWidth(350)
 statusText:SetText("")
 
 local progressionButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 progressionButton:SetWidth(120)
 progressionButton:SetHeight(24)
-progressionButton:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 62, 22)
+progressionButton:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 362, 22)
 progressionButton:SetText("Progression")
 
 local absorbButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
@@ -146,6 +163,464 @@ absorbButton:SetHeight(24)
 absorbButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -62, 22)
 absorbButton:SetText("Absorb")
 absorbButton:Disable()
+
+local essencePanel = CreateFrame("Frame", nil, frame)
+essencePanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -48)
+essencePanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMLEFT", 310, 20)
+
+local essenceTitle = essencePanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+essenceTitle:SetPoint("TOPLEFT", essencePanel, "TOPLEFT", 8, 0)
+essenceTitle:SetText("Stored Essences")
+
+local essenceSearch = CreateFrame("EditBox", "CrucibleEssenceSearchBox", essencePanel, "InputBoxTemplate")
+essenceSearch:SetWidth(245)
+essenceSearch:SetHeight(22)
+essenceSearch:SetPoint("TOPLEFT", essenceTitle, "BOTTOMLEFT", 0, -8)
+essenceSearch:SetAutoFocus(false)
+essenceSearch:SetMaxLetters(64)
+
+local essenceSearchHint = essencePanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+essenceSearchHint:SetPoint("LEFT", essenceSearch, "LEFT", 6, 0)
+essenceSearchHint:SetText("Search...")
+
+local essenceFilterButtons = {}
+local essenceFilterValues = { 0, 20, 40, 60, 80, 100 }
+local essenceFilterLabels = { "All", "20", "40", "60", "80", "100" }
+
+local essenceScroll = CreateFrame("ScrollFrame", "CrucibleEssenceScrollFrame", essencePanel, "UIPanelScrollFrameTemplate")
+essenceScroll:SetPoint("TOPLEFT", essencePanel, "TOPLEFT", 4, -82)
+essenceScroll:SetPoint("BOTTOMRIGHT", essencePanel, "BOTTOMRIGHT", -28, 28)
+
+local essenceContent = CreateFrame("Frame", nil, essenceScroll)
+essenceContent:SetWidth(245)
+essenceContent:SetHeight(1)
+essenceScroll:SetScrollChild(essenceContent)
+
+local essenceEmptyText = essenceContent:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+essenceEmptyText:SetPoint("TOP", essenceContent, "TOP", 0, -18)
+essenceEmptyText:SetWidth(230)
+essenceEmptyText:SetText("No stored essences.")
+essenceEmptyText:Hide()
+
+local essenceStatus = essencePanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+essenceStatus:SetPoint("BOTTOMLEFT", essencePanel, "BOTTOMLEFT", 8, 2)
+essenceStatus:SetWidth(235)
+essenceStatus:SetJustifyH("LEFT")
+essenceStatus:SetText("")
+
+local function ClearEssenceDisplayRows()
+    for _, row in ipairs(essenceDisplayRows) do
+        row:Hide()
+        row:SetParent(nil)
+    end
+    essenceDisplayRows = {}
+end
+
+local function GetEssenceItemInfo(itemEntry)
+    local name, link, _, _, _, _, _, _, _, texture = GetItemInfo(itemEntry)
+    if not name then
+        name = "Item " .. tostring(itemEntry)
+    end
+    if not texture and GetItemIcon then
+        texture = GetItemIcon(itemEntry)
+    end
+    return name, link, texture
+end
+
+local function EssencePassesFilter(row)
+    if essenceFilterMastery ~= 0 and row.mastery ~= essenceFilterMastery then
+        return false
+    end
+
+    if essenceSearchText == "" then
+        return true
+    end
+
+    local name = string.lower(row.name or ("Item " .. tostring(row.entry)))
+    return string.find(name, essenceSearchText, 1, true) ~= nil
+end
+
+local OpenMasteryForEssence
+
+local function RenderEssences()
+    ClearEssenceDisplayRows()
+    essenceEmptyText:Hide()
+
+    local visible = {}
+
+    for _, row in ipairs(essenceRows) do
+        local name, link, texture = GetEssenceItemInfo(row.entry)
+        row.name = name
+        row.link = link
+        row.texture = texture
+
+        if EssencePassesFilter(row) then
+            table.insert(visible, row)
+        end
+    end
+
+    table.sort(visible, function(a, b)
+        local an = string.lower(a.name or "")
+        local bn = string.lower(b.name or "")
+        if an == bn then
+            return a.entry < b.entry
+        end
+        return an < bn
+    end)
+
+    if #visible == 0 then
+        if #essenceRows == 0 then
+            essenceEmptyText:SetText("No stored essences.")
+        else
+            essenceEmptyText:SetText("No essences match the filter.")
+        end
+        essenceEmptyText:Show()
+        essenceContent:SetHeight(80)
+    else
+        local rowHeight = 34
+
+        for index, essence in ipairs(visible) do
+            local row = CreateFrame("Button", nil, essenceContent)
+            row:SetWidth(240)
+            row:SetHeight(rowHeight)
+            row:SetPoint("TOPLEFT", essenceContent, "TOPLEFT", 0, -((index - 1) * rowHeight))
+            row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+
+            local rowIcon = row:CreateTexture(nil, "ARTWORK")
+            rowIcon:SetWidth(28)
+            rowIcon:SetHeight(28)
+            rowIcon:SetPoint("LEFT", row, "LEFT", 2, 0)
+            rowIcon:SetTexture(essence.texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+
+            local rowName = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            rowName:SetPoint("LEFT", rowIcon, "RIGHT", 6, 6)
+            rowName:SetWidth(155)
+            rowName:SetJustifyH("LEFT")
+            rowName:SetText(essence.name)
+
+            local rowEntry = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            rowEntry:SetPoint("LEFT", rowIcon, "RIGHT", 6, -7)
+            rowEntry:SetWidth(155)
+            rowEntry:SetJustifyH("LEFT")
+            rowEntry:SetText("ID " .. tostring(essence.entry))
+
+            local rowMastery = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            rowMastery:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+            rowMastery:SetWidth(45)
+            rowMastery:SetJustifyH("RIGHT")
+            rowMastery:SetText(tostring(essence.mastery) .. "%")
+
+            row:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                if essence.link then
+                    GameTooltip:SetHyperlink(essence.link)
+                else
+                    GameTooltip:SetText(essence.name or ("Item " .. tostring(essence.entry)))
+                    GameTooltip:AddLine("Mastery: " .. tostring(essence.mastery) .. "%", 1, 1, 1)
+                    GameTooltip:Show()
+                end
+            end)
+
+            row:SetScript("OnLeave", function()
+                GameTooltip:Hide()
+            end)
+
+            row:SetScript("OnClick", function()
+                OpenMasteryForEssence(essence.entry)
+            end)
+
+            table.insert(essenceDisplayRows, row)
+        end
+
+        essenceContent:SetHeight(math.max(1, #visible * rowHeight))
+    end
+
+    essenceStatus:SetText(tostring(#visible) .. " shown / " .. tostring(#essenceRows) .. " stored")
+end
+
+for index, mastery in ipairs(essenceFilterValues) do
+    local button = CreateFrame("Button", nil, essencePanel, "UIPanelButtonTemplate")
+    button:SetWidth(index == 1 and 42 or 36)
+    button:SetHeight(20)
+
+    if index == 1 then
+        button:SetPoint("TOPLEFT", essenceSearch, "BOTTOMLEFT", 0, -7)
+    else
+        button:SetPoint("LEFT", essenceFilterButtons[index - 1], "RIGHT", 2, 0)
+    end
+
+    button:SetText(essenceFilterLabels[index])
+    button:SetScript("OnClick", function()
+        essenceFilterMastery = mastery
+        RenderEssences()
+    end)
+
+    essenceFilterButtons[index] = button
+end
+
+essenceSearch:SetScript("OnTextChanged", function(self)
+    local text = self:GetText() or ""
+    essenceSearchText = string.lower(text)
+    if text == "" then
+        essenceSearchHint:Show()
+    else
+        essenceSearchHint:Hide()
+    end
+    RenderEssences()
+end)
+
+essenceSearch:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+essenceSearch:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+
+local function RequestEssences()
+    essencesReceiving = false
+    essenceRows = {}
+    essenceStatus:SetText("Requesting essences...")
+
+    SendAddonMessage(
+        ADDON_PREFIX,
+        "ESSENCES",
+        "WHISPER",
+        UnitName("player")
+    )
+end
+
+local masteryPanel = CreateFrame("Frame", nil, frame)
+masteryPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 326, -48)
+masteryPanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -22, 20)
+masteryPanel:Hide()
+
+local masteryTitle = masteryPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+masteryTitle:SetPoint("TOP", masteryPanel, "TOP", 0, -4)
+masteryTitle:SetText("Essence Mastery")
+
+local masteryIcon = masteryPanel:CreateTexture(nil, "ARTWORK")
+masteryIcon:SetWidth(48)
+masteryIcon:SetHeight(48)
+masteryIcon:SetPoint("TOPLEFT", masteryPanel, "TOPLEFT", 22, -48)
+
+local masteryName = masteryPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+masteryName:SetPoint("LEFT", masteryIcon, "RIGHT", 10, 8)
+masteryName:SetWidth(285)
+masteryName:SetJustifyH("LEFT")
+masteryName:SetText("")
+
+local masteryTierText = masteryPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+masteryTierText:SetPoint("LEFT", masteryIcon, "RIGHT", 10, -12)
+masteryTierText:SetWidth(285)
+masteryTierText:SetJustifyH("LEFT")
+masteryTierText:SetText("")
+
+local masteryGainTitle = masteryPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+masteryGainTitle:SetPoint("TOPLEFT", masteryPanel, "TOPLEFT", 22, -118)
+masteryGainTitle:SetText("Next mastery gain:")
+
+local masteryGainText = masteryPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+masteryGainText:SetPoint("TOPLEFT", masteryGainTitle, "BOTTOMLEFT", 0, -8)
+masteryGainText:SetWidth(335)
+masteryGainText:SetJustifyH("LEFT")
+masteryGainText:SetJustifyV("TOP")
+masteryGainText:SetText("")
+
+local masteryCostTitle = masteryPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+masteryCostTitle:SetPoint("TOPLEFT", masteryPanel, "TOPLEFT", 22, -228)
+masteryCostTitle:SetText("Upgrade cost:")
+
+local masteryCostText = masteryPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+masteryCostText:SetPoint("TOPLEFT", masteryCostTitle, "BOTTOMLEFT", 0, -8)
+masteryCostText:SetWidth(335)
+masteryCostText:SetJustifyH("LEFT")
+masteryCostText:SetText("")
+
+local masteryStatus = masteryPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+masteryStatus:SetPoint("BOTTOM", masteryPanel, "BOTTOM", 0, 58)
+masteryStatus:SetWidth(335)
+masteryStatus:SetText("")
+
+local masteryBackButton = CreateFrame("Button", nil, masteryPanel, "UIPanelButtonTemplate")
+masteryBackButton:SetWidth(110)
+masteryBackButton:SetHeight(24)
+masteryBackButton:SetPoint("BOTTOMLEFT", masteryPanel, "BOTTOMLEFT", 38, 20)
+masteryBackButton:SetText("Back to Absorb")
+
+local masteryUpgradeButton = CreateFrame("Button", nil, masteryPanel, "UIPanelButtonTemplate")
+masteryUpgradeButton:SetWidth(110)
+masteryUpgradeButton:SetHeight(24)
+masteryUpgradeButton:SetPoint("BOTTOMRIGHT", masteryPanel, "BOTTOMRIGHT", -38, 20)
+masteryUpgradeButton:SetText("Upgrade")
+masteryUpgradeButton:Disable()
+
+local function SetAbsorbModeVisible(visible)
+    local widgets = {
+        instruction, slot, nameText, previewTitle, previewText,
+        statusText, progressionButton, absorbButton
+    }
+
+    for _, widget in ipairs(widgets) do
+        if visible then
+            widget:Show()
+        else
+            widget:Hide()
+        end
+    end
+end
+
+local function FormatMasteryValue(value)
+    local n = tonumber(value)
+    if not n then
+        return tostring(value)
+    end
+
+    local text = string.format("%.4f", n)
+    text = string.gsub(text, "0+$", "")
+    text = string.gsub(text, "%.$", "")
+
+    if n > 0 then
+        return "+" .. text
+    end
+
+    return text
+end
+local function FormatMoneyCopper(copper)
+    local value = tonumber(copper) or 0
+    local gold = math.floor(value / 10000)
+    local silver = math.floor((value % 10000) / 100)
+    local copperPart = value % 100
+
+    local parts = {}
+    if gold > 0 then table.insert(parts, tostring(gold) .. "g") end
+    if silver > 0 then table.insert(parts, tostring(silver) .. "s") end
+    if copperPart > 0 or #parts == 0 then table.insert(parts, tostring(copperPart) .. "c") end
+
+    return table.concat(parts, " ")
+end
+
+local function ResetMasteryPreview()
+    masteryPreviewEntry = nil
+    masteryPreviewResult = nil
+    masteryCurrent = nil
+    masteryNext = nil
+    masteryMoney = 0
+    masteryReagentEntry = 0
+    masteryReagentCount = 0
+    masteryStats = {}
+    masteryUpgradePending = false
+    masteryGainText:SetText("")
+    masteryCostText:SetText("")
+    masteryStatus:SetText("")
+    masteryUpgradeButton:SetText("Upgrade")
+    masteryUpgradeButton:Disable()
+end
+
+local function RenderMasteryPreview()
+    if not selectedEssenceEntry or masteryPreviewEntry ~= selectedEssenceEntry then
+        return
+    end
+
+    local name, link, texture = GetEssenceItemInfo(selectedEssenceEntry)
+    masteryName:SetText(link or name)
+    masteryIcon:SetTexture(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+
+    if masteryPreviewResult == "MAX_MASTERY" then
+        masteryTierText:SetText("Mastery: 100%")
+        masteryGainText:SetText("Maximum mastery reached.")
+        masteryCostText:SetText("No further upgrade available.")
+        masteryStatus:SetText("")
+        masteryUpgradeButton:Disable()
+        return
+    end
+
+    if masteryPreviewResult == "UNSUPPORTED_BRACKET" then
+        masteryTierText:SetText("Mastery: " .. tostring(masteryCurrent or "?") .. "%")
+        masteryGainText:SetText("")
+        masteryCostText:SetText("Upgrade economy is not configured for this bracket yet.")
+        masteryStatus:SetText("")
+        masteryUpgradeButton:Disable()
+        return
+    end
+
+    if masteryPreviewResult ~= "SUCCESS" then
+        masteryTierText:SetText("")
+        masteryGainText:SetText("")
+        masteryCostText:SetText("")
+        masteryStatus:SetText("Unavailable: " .. tostring(masteryPreviewResult))
+        masteryUpgradeButton:Disable()
+        return
+    end
+
+    masteryTierText:SetText(
+        "Mastery: " .. tostring(masteryCurrent) .. "%  ->  " .. tostring(masteryNext) .. "%"
+    )
+
+    local gainLines = {}
+    for _, stat in ipairs(masteryStats) do
+        table.insert(gainLines, FormatMasteryValue(stat.value) .. " " .. stat.name)
+    end
+    masteryGainText:SetText(table.concat(gainLines, "\n"))
+
+    local costLines = { FormatMoneyCopper(masteryMoney) }
+    if masteryReagentEntry ~= 0 and masteryReagentCount > 0 then
+        local reagentName, reagentLink = GetItemInfo(masteryReagentEntry)
+        table.insert(
+            costLines,
+            tostring(masteryReagentCount) .. "x " ..
+            (reagentLink or reagentName or ("Item " .. tostring(masteryReagentEntry)))
+        )
+    end
+    masteryCostText:SetText(table.concat(costLines, "\n"))
+
+    masteryStatus:SetText("Ready")
+    if masteryUpgradePending then
+        masteryUpgradeButton:Disable()
+    else
+        masteryUpgradeButton:Enable()
+    end
+end
+
+local function RequestMasteryPreview(itemEntry)
+    ResetMasteryPreview()
+    masteryPreviewEntry = itemEntry
+    masteryStatus:SetText("Loading mastery...")
+
+    SendAddonMessage(
+        ADDON_PREFIX,
+        "MASTERY_PREVIEW\t" .. tostring(itemEntry),
+        "WHISPER",
+        UnitName("player")
+    )
+end
+
+OpenMasteryForEssence = function(itemEntry)
+    selectedEssenceEntry = itemEntry
+    SetAbsorbModeVisible(false)
+    masteryPanel:Show()
+    RequestMasteryPreview(itemEntry)
+end
+
+masteryBackButton:SetScript("OnClick", function()
+    selectedEssenceEntry = nil
+    masteryPanel:Hide()
+    ResetMasteryPreview()
+    SetAbsorbModeVisible(true)
+end)
+
+masteryUpgradeButton:SetScript("OnClick", function()
+    if masteryUpgradePending or not selectedEssenceEntry then
+        return
+    end
+
+    masteryUpgradePending = true
+    masteryUpgradeButton:Disable()
+    masteryUpgradeButton:SetText("Upgrading...")
+    masteryStatus:SetText("Waiting for server...")
+
+    SendAddonMessage(
+        ADDON_PREFIX,
+        "MASTERY_UPGRADE\t" .. tostring(selectedEssenceEntry),
+        "WHISPER",
+        UnitName("player")
+    )
+end)
 
 local function RestoreReservedVisuals()
     if not NUM_CONTAINER_FRAMES then
@@ -303,7 +778,7 @@ local function RenderPreview()
     local lines = {}
 
     for _, stat in ipairs(previewStats) do
-        table.insert(lines, FormatAbsorbedValue(stat.value) .. " " .. stat.name)
+        table.insert(lines, FormatMasteryValue(stat.value) .. " " .. stat.name)
     end
 
     previewText:SetText(table.concat(lines, "\n"))
@@ -504,6 +979,7 @@ end)
 
 frame:SetScript("OnShow", function()
     ResetSlot("")
+    RequestEssences()
 end)
 
 frame:SetScript("OnHide", function()
@@ -740,6 +1216,111 @@ listener:SetScript("OnEvent", function(self, event, ...)
     end
 
     local parts = SplitTabs(message)
+
+    if parts[1] == "MASTERY_BEGIN" and parts[2] and parts[3] then
+        local entry = tonumber(parts[2])
+        if not selectedEssenceEntry or entry ~= selectedEssenceEntry then
+            return
+        end
+
+        masteryPreviewEntry = entry
+        masteryPreviewResult = parts[3]
+        masteryStats = {}
+
+        if parts[4] then masteryCurrent = tonumber(parts[4]) end
+        if parts[5] then masteryNext = tonumber(parts[5]) end
+        if parts[6] then masteryMoney = tonumber(parts[6]) or 0 end
+        if parts[7] then masteryReagentEntry = tonumber(parts[7]) or 0 end
+        if parts[8] then masteryReagentCount = tonumber(parts[8]) or 0 end
+        return
+    end
+
+    if parts[1] == "MASTERY_STAT" and parts[2] and parts[3] and parts[4] then
+        local entry = tonumber(parts[2])
+        if entry ~= masteryPreviewEntry then
+            return
+        end
+
+        table.insert(masteryStats, {
+            name = parts[3],
+            value = parts[4],
+        })
+        return
+    end
+
+    if parts[1] == "MASTERY_END" and parts[2] then
+        local entry = tonumber(parts[2])
+        if entry ~= masteryPreviewEntry then
+            return
+        end
+
+        masteryUpgradePending = false
+        masteryUpgradeButton:SetText("Upgrade")
+        RenderMasteryPreview()
+        return
+    end
+
+    if parts[1] == "MASTERY_RESULT" and parts[2] and parts[3] then
+        local entry = tonumber(parts[2])
+        if not selectedEssenceEntry or entry ~= selectedEssenceEntry then
+            return
+        end
+
+        masteryUpgradePending = false
+        masteryUpgradeButton:SetText("Upgrade")
+
+        if parts[3] == "SUCCESS" then
+            masteryStatus:SetText("Upgraded")
+            RequestEssences()
+        elseif parts[3] == "NOT_ENOUGH_MONEY" then
+            masteryStatus:SetText("Not enough money")
+            RenderMasteryPreview()
+        elseif parts[3] == "NOT_ENOUGH_REAGENT" then
+            masteryStatus:SetText("Missing reagent")
+            RenderMasteryPreview()
+        elseif parts[3] == "UNSUPPORTED_BRACKET" then
+            masteryStatus:SetText("Unsupported bracket")
+            RenderMasteryPreview()
+        else
+            masteryStatus:SetText("Upgrade failed: " .. tostring(parts[3]))
+            RenderMasteryPreview()
+        end
+        return
+    end
+
+    if parts[1] == "ESSENCES_BEGIN" then
+        essencesReceiving = true
+        essenceRows = {}
+        return
+    end
+
+    if parts[1] == "ESSENCE_ROW" and parts[2] and parts[3] then
+        if not essencesReceiving then
+            return
+        end
+
+        local entry = tonumber(parts[2])
+        local mastery = tonumber(parts[3])
+
+        if entry and mastery then
+            table.insert(essenceRows, {
+                entry = entry,
+                mastery = mastery,
+            })
+        end
+
+        return
+    end
+
+    if parts[1] == "ESSENCES_END" then
+        if not essencesReceiving then
+            return
+        end
+
+        essencesReceiving = false
+        RenderEssences()
+        return
+    end
 
     if parts[1] == "STATS_BEGIN" then
         statsReceiving = true
