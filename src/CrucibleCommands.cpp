@@ -375,18 +375,10 @@ public:
         if (!player)
             return false;
 
-        uint32 guid = player->GetGUID().GetCounter();
+        std::vector<Crucible::AccumulatedStat> stats =
+            Crucible::GetAccumulatedStats(player);
 
-        QueryResult result = CharacterDatabase.Query(
-            "SELECT stat_id, SUM(absorbed_value) "
-            "FROM character_crucible_contribution "
-            "WHERE guid = {} "
-            "GROUP BY stat_id "
-            "ORDER BY stat_id",
-            guid
-        );
-
-        if (!result)
+        if (stats.empty())
         {
             handler->SendSysMessage("Crucible: no absorbed stats recorded.");
             return true;
@@ -394,21 +386,15 @@ public:
 
         handler->SendSysMessage("Crucible accumulated stats:");
 
-        do
+        for (Crucible::AccumulatedStat const& stat : stats)
         {
-            Field* fields = result->Fetch();
-            Crucible::StatId stat = static_cast<Crucible::StatId>(fields[0].Get<uint16>());
-            float total = fields[1].Get<float>();
-            int32 applied = static_cast<int32>(total);
-
             handler->PSendSysMessage(
                 "{}: stored = {:.4f}, applied = {}",
-                Crucible::GetStatName(stat),
-                total,
-                applied
+                Crucible::GetStatName(stat.Stat),
+                stat.StoredValue,
+                stat.AppliedValue
             );
         }
-        while (result->NextRow());
 
         return true;
     }

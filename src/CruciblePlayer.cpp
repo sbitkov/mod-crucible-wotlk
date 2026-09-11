@@ -20,6 +20,7 @@ namespace
     constexpr std::string_view ITEMGUID_COMMAND = "ITEMGUID";
     constexpr std::string_view ABSORB_COMMAND = "ABSORB";
     constexpr std::string_view PREVIEW_COMMAND = "PREVIEW";
+    constexpr std::string_view STATS_COMMAND = "STATS";
 
     bool TryParseCrucibleAddonMessage(
         std::string const& msg,
@@ -188,6 +189,39 @@ namespace
 
         player->Whisper(message, LANG_ADDON, player);
     }
+
+    void SendCrucibleStatsBegin(Player* player)
+    {
+        if (!player)
+            return;
+
+        player->Whisper("CRUCIBLE\tSTATS_BEGIN", LANG_ADDON, player);
+    }
+
+    void SendCrucibleStatsRow(
+        Player* player,
+        Crucible::AccumulatedStat const& stat)
+    {
+        if (!player)
+            return;
+
+        std::string message = fmt::format(
+            "CRUCIBLE\tSTATS_ROW\t{}\t{}\t{:.4f}\t{}",
+            static_cast<uint16>(stat.Stat),
+            Crucible::GetStatName(stat.Stat),
+            stat.StoredValue,
+            stat.AppliedValue);
+
+        player->Whisper(message, LANG_ADDON, player);
+    }
+
+    void SendCrucibleStatsEnd(Player* player)
+    {
+        if (!player)
+            return;
+
+        player->Whisper("CRUCIBLE\tSTATS_END", LANG_ADDON, player);
+    }
 }
 
 class CruciblePlayerScript : public PlayerScript
@@ -263,6 +297,26 @@ public:
                 item->GetBagSlot(),
                 item->GetSlot(),
                 item->GetCount());
+            return;
+        }
+
+        if (command == STATS_COMMAND)
+        {
+            std::vector<Crucible::AccumulatedStat> stats =
+                Crucible::GetAccumulatedStats(player);
+
+            LOG_INFO(
+                "module.crucible",
+                "Crucible STATS: player='{}' stats={}",
+                player->GetName(),
+                stats.size());
+
+            SendCrucibleStatsBegin(player);
+
+            for (Crucible::AccumulatedStat const& stat : stats)
+                SendCrucibleStatsRow(player, stat);
+
+            SendCrucibleStatsEnd(player);
             return;
         }
 

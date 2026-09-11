@@ -71,6 +71,13 @@ namespace Crucible
         float AbsorbedValue;
     };
 
+    struct AccumulatedStat
+    {
+        StatId Stat;
+        float StoredValue;
+        int32 AppliedValue;
+    };
+
     enum class AbsorbResult : uint8
     {
         SUCCESS = 0,
@@ -86,6 +93,8 @@ namespace Crucible
     char const* GetStatName(StatId stat);
 
     std::vector<Contribution> ExtractContributions(ItemTemplate const* proto);
+
+    std::vector<AccumulatedStat> GetAccumulatedStats(Player* player);
 
     // Authoritative eligibility/contribution preview for a concrete physical Item.
     // Uses the same validation rules as AbsorbItem but does not mutate inventory or DB.

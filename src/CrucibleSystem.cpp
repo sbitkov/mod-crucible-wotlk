@@ -408,6 +408,45 @@ namespace Crucible
         return contributions;
     }
 
+    std::vector<AccumulatedStat> GetAccumulatedStats(Player* player)
+    {
+        std::vector<AccumulatedStat> stats;
+
+        if (!player)
+            return stats;
+
+        uint32 guid = player->GetGUID().GetCounter();
+
+        QueryResult result = CharacterDatabase.Query(
+            "SELECT stat_id, SUM(absorbed_value) "
+            "FROM character_crucible_contribution "
+            "WHERE guid = {} "
+            "GROUP BY stat_id "
+            "ORDER BY stat_id",
+            guid
+        );
+
+        if (!result)
+            return stats;
+
+        do
+        {
+            Field* fields = result->Fetch();
+
+            StatId stat = static_cast<StatId>(fields[0].Get<uint16>());
+            float total = fields[1].Get<float>();
+
+            stats.push_back({
+                stat,
+                total,
+                static_cast<int32>(total)
+            });
+        }
+        while (result->NextRow());
+
+        return stats;
+    }
+
     AbsorbResult PreviewItem(
         Player* player,
         Item* item,

@@ -12,7 +12,7 @@ This project is an independent implementation. It was designed and developed sep
 
 ## Status
 
-Current version: **v0.2**
+Current version: **v0.3**
 
 The current implementation supports:
 
@@ -24,6 +24,11 @@ The current implementation supports:
 - server-authoritative absorption;
 - server-authoritative preview of the stats an item will grant before absorption;
 - a client UI with a virtual item slot, item icon, item name, preview, reservation feedback, and an `Absorb` button;
+- a separate read-only **Progression Overview** window showing accumulated Crucible bonuses;
+- progression data shown as both fractional `Stored` values and integer `Applied` values;
+- a `/cruciblestats` command for opening the Progression Overview from anywhere;
+- a `Progression` button inside the physical Crucible absorption window;
+- a server-authoritative shared accumulated-stat backend used by both `.crucible stats` and the addon UI;
 - explicit server results such as `SUCCESS`, `ALREADY_ABSORBED`, `WEAPON_UNSUPPORTED`, and `NO_SUPPORTED_STATS`.
 
 Weapons are intentionally unsupported at this stage.
@@ -33,7 +38,7 @@ Weapons are intentionally unsupported at this stage.
 For supported item stats, the Crucible currently stores:
 
 ```text
-absorbed value = source value Р“вЂ” 0.20
+absorbed value = source value * 0.20
 ```
 
 The fractional values are persisted in the character database.
@@ -41,6 +46,8 @@ The fractional values are persisted in the character database.
 Permanent bonuses are aggregated first and only then converted to the integer values applied by the WoW 3.3.5a core. This means separate contributions such as `+0.6 Stamina` and `+0.4 Stamina` combine into `+1 Stamina` rather than being truncated independently.
 
 The server is authoritative. The client UI identifies a concrete physical item by GUID, requests a preview from the server, and only sends the absorption request when the player confirms it.
+
+Absorption remains tied to interaction with the physical Crucible game object. The Progression Overview is read-only and can be opened independently without granting access to absorption.
 
 ## Repository layout
 
@@ -59,7 +66,6 @@ mod-crucible-wotlk/
 |-- .github/                     GitHub workflows/templates
 |-- LICENSE
 `-- README.md
-
 ```
 
 ## Requirements
@@ -108,15 +114,21 @@ Important messages include:
 Client -> Server
 CRUCIBLE    PREVIEW    <item GUID>
 CRUCIBLE    ABSORB     <item GUID>
+CRUCIBLE    STATS
 
 Server -> Client
 CRUCIBLE    PREVIEW_BEGIN    <result>    <item GUID>
 CRUCIBLE    PREVIEW_STAT     <item GUID> <stat name> <value>
 CRUCIBLE    PREVIEW_END      <item GUID>
 CRUCIBLE    RESULT           <result>    <item GUID>
+CRUCIBLE    STATS_BEGIN
+CRUCIBLE    STATS_ROW        <stat id>   <stat name> <stored> <applied>
+CRUCIBLE    STATS_END
 ```
 
 The client does not calculate Crucible contributions itself. Preview values and actual absorption use the same server-side contribution logic.
+
+Accumulated progression is also server-authoritative. Both `.crucible stats` and the addon Progression Overview read from the same `GetAccumulatedStats()` backend.
 
 ## Development process
 

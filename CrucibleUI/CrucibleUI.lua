@@ -10,6 +10,9 @@ local previewGuid = nil
 local previewResult = nil
 local previewStats = {}
 
+local statsReceiving = false
+local statsRows = {}
+
 local function MakeBagLocation(bag, slot)
     return { bagID = bag, slotIndex = slot }
 end
@@ -131,10 +134,16 @@ statusText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 56)
 statusText:SetWidth(350)
 statusText:SetText("")
 
+local progressionButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+progressionButton:SetWidth(120)
+progressionButton:SetHeight(24)
+progressionButton:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 62, 22)
+progressionButton:SetText("Progression")
+
 local absorbButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 absorbButton:SetWidth(110)
 absorbButton:SetHeight(24)
-absorbButton:SetPoint("BOTTOM", frame, "BOTTOM", 0, 22)
+absorbButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -62, 22)
 absorbButton:SetText("Absorb")
 absorbButton:Disable()
 
@@ -503,6 +512,195 @@ end)
 
 frame:Hide()
 
+local progressionFrame = CreateFrame("Frame", "CrucibleProgressionFrame", UIParent)
+progressionFrame:SetWidth(420)
+progressionFrame:SetHeight(430)
+progressionFrame:SetPoint("CENTER", UIParent, "CENTER", 460, 30)
+progressionFrame:SetFrameStrata("DIALOG")
+progressionFrame:SetMovable(true)
+progressionFrame:EnableMouse(true)
+progressionFrame:RegisterForDrag("LeftButton")
+progressionFrame:SetScript("OnDragStart", function(self) self:StartMoving() end)
+progressionFrame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+
+progressionFrame:SetBackdrop({
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+    tile = true,
+    tileSize = 32,
+    edgeSize = 32,
+    insets = { left = 11, right = 12, top = 12, bottom = 11 }
+})
+
+local progressionTitle = progressionFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+progressionTitle:SetPoint("TOP", progressionFrame, "TOP", 0, -18)
+progressionTitle:SetText("Crucible Progression")
+
+local progressionCloseButton = CreateFrame("Button", nil, progressionFrame, "UIPanelCloseButton")
+progressionCloseButton:SetPoint("TOPRIGHT", progressionFrame, "TOPRIGHT", -5, -5)
+
+local progressionSubtitle = progressionFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+progressionSubtitle:SetPoint("TOP", progressionTitle, "BOTTOM", 0, -8)
+progressionSubtitle:SetText("Permanent bonuses accumulated from absorbed equipment")
+
+local progressionHeader = progressionFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+progressionHeader:SetPoint("TOPLEFT", progressionFrame, "TOPLEFT", 34, -72)
+progressionHeader:SetText("Stat")
+
+local progressionStoredHeader = progressionFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+progressionStoredHeader:SetPoint("TOP", progressionFrame, "TOP", 70, -72)
+progressionStoredHeader:SetText("Stored")
+
+local progressionAppliedHeader = progressionFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+progressionAppliedHeader:SetPoint("TOPRIGHT", progressionFrame, "TOPRIGHT", -38, -72)
+progressionAppliedHeader:SetText("Applied")
+
+local progressionScroll = CreateFrame(
+    "ScrollFrame",
+    "CrucibleProgressionScrollFrame",
+    progressionFrame,
+    "UIPanelScrollFrameTemplate"
+)
+progressionScroll:SetPoint("TOPLEFT", progressionFrame, "TOPLEFT", 28, -94)
+progressionScroll:SetPoint("BOTTOMRIGHT", progressionFrame, "BOTTOMRIGHT", -48, 56)
+
+local progressionContent = CreateFrame("Frame", nil, progressionScroll)
+progressionContent:SetWidth(334)
+progressionContent:SetHeight(1)
+progressionScroll:SetScrollChild(progressionContent)
+
+local progressionEmptyText = progressionContent:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+progressionEmptyText:SetPoint("TOP", progressionContent, "TOP", 0, -18)
+progressionEmptyText:SetWidth(320)
+progressionEmptyText:SetText("No absorbed stats recorded.")
+progressionEmptyText:Hide()
+
+local progressionStatus = progressionFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+progressionStatus:SetPoint("BOTTOMLEFT", progressionFrame, "BOTTOMLEFT", 30, 28)
+progressionStatus:SetWidth(250)
+progressionStatus:SetJustifyH("LEFT")
+progressionStatus:SetText("")
+
+local progressionRefreshButton = CreateFrame("Button", nil, progressionFrame, "UIPanelButtonTemplate")
+progressionRefreshButton:SetWidth(86)
+progressionRefreshButton:SetHeight(24)
+progressionRefreshButton:SetPoint("BOTTOMRIGHT", progressionFrame, "BOTTOMRIGHT", -28, 20)
+progressionRefreshButton:SetText("Refresh")
+
+local progressionRows = {}
+
+local function ClearProgressionRows()
+    for _, row in ipairs(progressionRows) do
+        row:Hide()
+        row:SetParent(nil)
+    end
+
+    progressionRows = {}
+end
+
+local function FormatStoredValue(value)
+    local n = tonumber(value)
+    if not n then
+        return tostring(value)
+    end
+
+    local formatted = string.format("%.4f", n)
+    formatted = string.gsub(formatted, "0+$", "")
+    formatted = string.gsub(formatted, "%.$", "")
+
+    if n > 0 then
+        return "+" .. formatted
+    end
+
+    return formatted
+end
+
+local function FormatAppliedValue(value)
+    local n = tonumber(value)
+    if not n then
+        return tostring(value)
+    end
+
+    if n > 0 then
+        return "+" .. tostring(n)
+    end
+
+    return tostring(n)
+end
+
+local function RenderProgression()
+    ClearProgressionRows()
+
+    progressionEmptyText:Hide()
+
+    if #statsRows == 0 then
+        progressionEmptyText:Show()
+        progressionContent:SetHeight(80)
+        progressionStatus:SetText("No accumulated bonuses")
+        return
+    end
+
+    local rowHeight = 24
+
+    for index, stat in ipairs(statsRows) do
+        local row = CreateFrame("Frame", nil, progressionContent)
+        row:SetWidth(330)
+        row:SetHeight(rowHeight)
+        row:SetPoint("TOPLEFT", progressionContent, "TOPLEFT", 0, -((index - 1) * rowHeight))
+
+        local name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        name:SetPoint("LEFT", row, "LEFT", 6, 0)
+        name:SetWidth(170)
+        name:SetJustifyH("LEFT")
+        name:SetText(stat.name)
+
+        local stored = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        stored:SetPoint("LEFT", row, "LEFT", 190, 0)
+        stored:SetWidth(65)
+        stored:SetJustifyH("RIGHT")
+        stored:SetText(FormatStoredValue(stat.stored))
+
+        local applied = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        applied:SetPoint("RIGHT", row, "RIGHT", -6, 0)
+        applied:SetWidth(55)
+        applied:SetJustifyH("RIGHT")
+        applied:SetText(FormatAppliedValue(stat.applied))
+
+        table.insert(progressionRows, row)
+    end
+
+    progressionContent:SetHeight(math.max(1, #statsRows * rowHeight))
+    progressionStatus:SetText(tostring(#statsRows) .. " accumulated stat" .. (#statsRows == 1 and "" or "s"))
+end
+
+local function RequestStats()
+    statsReceiving = false
+    statsRows = {}
+
+    progressionStatus:SetText("Requesting stats...")
+    progressionRefreshButton:Disable()
+
+    SendAddonMessage(
+        ADDON_PREFIX,
+        "STATS",
+        "WHISPER",
+        UnitName("player")
+    )
+end
+
+progressionRefreshButton:SetScript("OnClick", RequestStats)
+
+progressionFrame:SetScript("OnShow", function()
+    RequestStats()
+end)
+
+progressionFrame:Hide()
+
+progressionButton:SetScript("OnClick", function()
+    progressionFrame:Show()
+    progressionFrame:Raise()
+end)
+
 local listener = CreateFrame("Frame")
 listener:RegisterEvent("CHAT_MSG_ADDON")
 listener:RegisterEvent("BAG_UPDATE")
@@ -537,6 +735,37 @@ listener:SetScript("OnEvent", function(self, event, ...)
     end
 
     local parts = SplitTabs(message)
+
+    if parts[1] == "STATS_BEGIN" then
+        statsReceiving = true
+        statsRows = {}
+        return
+    end
+
+    if parts[1] == "STATS_ROW" and parts[2] and parts[3] and parts[4] and parts[5] then
+        if not statsReceiving then
+            return
+        end
+
+        table.insert(statsRows, {
+            id = parts[2],
+            name = parts[3],
+            stored = parts[4],
+            applied = parts[5],
+        })
+        return
+    end
+
+    if parts[1] == "STATS_END" then
+        if not statsReceiving then
+            return
+        end
+
+        statsReceiving = false
+        progressionRefreshButton:Enable()
+        RenderProgression()
+        return
+    end
 
     if parts[1] == "RESULT" and parts[2] and parts[3] then
         HandleResult(parts[2], parts[3])
@@ -595,5 +824,15 @@ SlashCmdList["CRUCIBLEUI"] = function()
     else
         frame:Show()
         frame:Raise()
+    end
+end
+
+SLASH_CRUCIBLESTATS1 = "/cruciblestats"
+SlashCmdList["CRUCIBLESTATS"] = function()
+    if progressionFrame:IsShown() then
+        progressionFrame:Hide()
+    else
+        progressionFrame:Show()
+        progressionFrame:Raise()
     end
 end
