@@ -408,8 +408,13 @@ namespace Crucible
         return contributions;
     }
 
-    AbsorbResult AbsorbItem(Player* player, Item* item)
+    AbsorbResult PreviewItem(
+        Player* player,
+        Item* item,
+        std::vector<Contribution>& contributions)
     {
+        contributions.clear();
+
         if (!player || !item)
             return AbsorbResult::INVALID_ARGUMENT;
 
@@ -430,9 +435,23 @@ namespace Crucible
         if (item->IsInTrade())
             return AbsorbResult::ITEM_IN_TRADE;
 
-        std::vector<Contribution> contributions = ExtractContributions(proto);
+        contributions = ExtractContributions(proto);
         if (contributions.empty())
             return AbsorbResult::NO_SUPPORTED_STATS;
+
+        return AbsorbResult::SUCCESS;
+    }
+
+    AbsorbResult AbsorbItem(Player* player, Item* item)
+    {
+        std::vector<Contribution> contributions;
+        AbsorbResult previewResult = PreviewItem(player, item, contributions);
+
+        if (previewResult != AbsorbResult::SUCCESS)
+            return previewResult;
+
+        const uint32 itemEntry = item->GetEntry();
+        const uint32 guid = player->GetGUID().GetCounter();
 
         CharacterDatabaseTransaction trans =
             BuildAbsorptionTransaction(guid, itemEntry, contributions);

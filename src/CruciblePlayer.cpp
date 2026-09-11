@@ -7,6 +7,8 @@
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
 
+#include <fmt/format.h>
+
 #include <charconv>
 #include <cstdint>
 #include <string>
@@ -17,6 +19,7 @@ namespace
     constexpr std::string_view CRUCIBLE_PREFIX = "CRUCIBLE";
     constexpr std::string_view ITEMGUID_COMMAND = "ITEMGUID";
     constexpr std::string_view ABSORB_COMMAND = "ABSORB";
+    constexpr std::string_view PREVIEW_COMMAND = "PREVIEW";
 
     bool TryParseCrucibleAddonMessage(
         std::string const& msg,
@@ -122,6 +125,69 @@ namespace
 
         return "UNKNOWN";
     }
+
+    void SendCrucibleResult(
+        Player* player,
+        std::string_view result,
+        std::string_view guidText)
+    {
+        if (!player)
+            return;
+
+        std::string message = "CRUCIBLE\tRESULT\t";
+        message.append(result.data(), result.size());
+        message.push_back('\t');
+        message.append(guidText.data(), guidText.size());
+
+        // Use AzerothCore's normal addon-whisper path.
+        player->Whisper(message, LANG_ADDON, player);
+    }
+
+    void SendCruciblePreviewBegin(
+        Player* player,
+        std::string_view result,
+        std::string_view guidText)
+    {
+        if (!player)
+            return;
+
+        std::string message = "CRUCIBLE\tPREVIEW_BEGIN\t";
+        message.append(result.data(), result.size());
+        message.push_back('\t');
+        message.append(guidText.data(), guidText.size());
+
+        player->Whisper(message, LANG_ADDON, player);
+    }
+
+    void SendCruciblePreviewStat(
+        Player* player,
+        std::string_view guidText,
+        Crucible::Contribution const& contribution)
+    {
+        if (!player)
+            return;
+
+        std::string message = fmt::format(
+            "CRUCIBLE\tPREVIEW_STAT\t{}\t{}\t{:.4f}",
+            guidText,
+            Crucible::GetStatName(contribution.Stat),
+            contribution.AbsorbedValue);
+
+        player->Whisper(message, LANG_ADDON, player);
+    }
+
+    void SendCruciblePreviewEnd(
+        Player* player,
+        std::string_view guidText)
+    {
+        if (!player)
+            return;
+
+        std::string message = "CRUCIBLE\tPREVIEW_END\t";
+        message.append(guidText.data(), guidText.size());
+
+        player->Whisper(message, LANG_ADDON, player);
+    }
 }
 
 class CruciblePlayerScript : public PlayerScript
@@ -200,6 +266,50 @@ public:
             return;
         }
 
+        if (command == PREVIEW_COMMAND)
+        {
+            Item* item = ResolvePlayerItemByClientGuid(player, argument);
+
+            if (!item)
+            {
+                LOG_INFO(
+                    "module.crucible",
+                    "Crucible PREVIEW: player='{}' guid='{}' item not found or invalid",
+                    player->GetName(),
+                    argument);
+
+                SendCruciblePreviewBegin(player, "ITEM_NOT_FOUND", argument);
+                SendCruciblePreviewEnd(player, argument);
+                return;
+            }
+
+            std::vector<Crucible::Contribution> contributions;
+            Crucible::AbsorbResult result =
+                Crucible::PreviewItem(player, item, contributions);
+
+            char const* resultName = GetAbsorbResultName(result);
+
+            LOG_INFO(
+                "module.crucible",
+                "Crucible PREVIEW: player='{}' guid='{}' entry={} result={} stats={}",
+                player->GetName(),
+                argument,
+                item->GetEntry(),
+                resultName,
+                contributions.size());
+
+            SendCruciblePreviewBegin(player, resultName, argument);
+
+            if (result == Crucible::AbsorbResult::SUCCESS)
+            {
+                for (Crucible::Contribution const& contribution : contributions)
+                    SendCruciblePreviewStat(player, argument, contribution);
+            }
+
+            SendCruciblePreviewEnd(player, argument);
+            return;
+        }
+
         if (command == ABSORB_COMMAND)
         {
             Item* item = ResolvePlayerItemByClientGuid(player, argument);
@@ -211,6 +321,8 @@ public:
                     "Crucible ABSORB: player='{}' guid='{}' item not found or invalid",
                     player->GetName(),
                     argument);
+
+                SendCrucibleResult(player, "ITEM_NOT_FOUND", argument);
                 return;
             }
 
@@ -218,13 +330,17 @@ public:
 
             Crucible::AbsorbResult result = Crucible::AbsorbItem(player, item);
 
+            char const* resultName = GetAbsorbResultName(result);
+
             LOG_INFO(
                 "module.crucible",
                 "Crucible ABSORB: player='{}' guid='{}' entry={} result={}",
                 player->GetName(),
                 argument,
                 itemEntry,
-                GetAbsorbResultName(result));
+                resultName);
+
+            SendCrucibleResult(player, resultName, argument);
             return;
         }
 

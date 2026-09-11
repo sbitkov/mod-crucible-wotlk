@@ -87,6 +87,14 @@ namespace Crucible
 
     std::vector<Contribution> ExtractContributions(ItemTemplate const* proto);
 
+    // Authoritative eligibility/contribution preview for a concrete physical Item.
+    // Uses the same validation rules as AbsorbItem but does not mutate inventory or DB.
+    // On SUCCESS, contributions contains the exact values that would be snapshotted.
+    AbsorbResult PreviewItem(
+        Player* player,
+        Item* item,
+        std::vector<Contribution>& contributions);
+
     // Authoritative real absorption path.
     // The caller must supply the concrete physical Item instance selected by the player.
     // On success exactly one unit of that Item is destroyed, its contribution snapshot is

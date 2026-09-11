@@ -1,0 +1,7 @@
+## Interface: 30300
+## Title: Crucible UI
+## Notes: Client UI for the Crucible AzerothCore module
+## Author: sbitkov
+## Version: 0.2-dev-preview
+
+CrucibleUI.lua
