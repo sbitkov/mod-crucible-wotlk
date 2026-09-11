@@ -95,6 +95,25 @@ namespace Crucible
         DESTROY_FAILED
     };
 
+    enum class MasteryUpgradeResult : uint8
+    {
+        SUCCESS = 0,
+        INVALID_ARGUMENT,
+        ESSENCE_NOT_FOUND,
+        INVALID_MASTERY_STATE,
+        UNSUPPORTED_BRACKET,
+        NOT_ENOUGH_MONEY,
+        NOT_ENOUGH_REAGENT
+    };
+
+    struct MasteryCost
+    {
+        uint32 MoneyCopper = 0;
+        uint32 ReagentEntry = 0;
+        uint32 ReagentCount = 0;
+        uint32 NextMastery = 0;
+    };
+
     char const* GetStatName(StatId stat);
 
     std::vector<Contribution> ExtractContributions(ItemTemplate const* proto);
@@ -114,6 +133,17 @@ namespace Crucible
     // On success exactly one unit of that Item is destroyed, its contribution snapshot is
     // committed, and the player's permanent Crucible bonuses are recalculated.
     AbsorbResult AbsorbItem(Player* player, Item* item);
+
+    // Returns the configured cost for the next mastery step.
+    // v0.5 currently defines economy only for RequiredLevel 1-19.
+    bool GetMasteryUpgradeCost(
+        ItemTemplate const* proto,
+        uint32 currentMastery,
+        MasteryCost& cost);
+
+    // Advances one stored essence by exactly one mastery tier.
+    // No duplicate physical copy of the absorbed equipment is required.
+    MasteryUpgradeResult UpgradeMastery(Player* player, uint32 itemEntry);
 
     // Applies the current aggregated Crucible state from DB.
     // Any Crucible bonuses previously tracked for this live Player are removed first.

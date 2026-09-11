@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS `character_crucible_absorption` (
     `guid` INT UNSIGNED NOT NULL,
     `item_entry` INT UNSIGNED NOT NULL,
+    `mastery_percent` TINYINT UNSIGNED NOT NULL DEFAULT 20,
     `absorbed_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`guid`, `item_entry`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

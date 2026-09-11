@@ -3,6 +3,7 @@
 #include "DatabaseEnv.h"
 #include "Item.h"
 #include "ItemTemplate.h"
+#include "ObjectMgr.h"
 #include "Player.h"
 #include "QueryResult.h"
 
@@ -401,7 +402,7 @@ namespace
             trans,
             fmt::format(
                 "INSERT INTO character_crucible_absorption "
-                "(guid, item_entry) VALUES ({}, {})",
+                "(guid, item_entry, mastery_percent) VALUES ({}, {}, 20)",
                 guid,
                 itemEntry
             )
@@ -657,6 +658,168 @@ namespace Crucible
 
         Recalculate(player);
         return AbsorbResult::SUCCESS;
+    }
+
+    bool GetMasteryUpgradeCost(
+        ItemTemplate const* proto,
+        uint32 currentMastery,
+        MasteryCost& cost)
+    {
+        cost = MasteryCost{};
+
+        if (!proto)
+            return false;
+
+        // Economy is intentionally defined only for the first playtest bracket.
+        // Higher brackets will be added from observed gameplay data later.
+        if (proto->RequiredLevel < 1 || proto->RequiredLevel > 19)
+            return false;
+
+        switch (currentMastery)
+        {
+            case 20:
+                // 20% -> 40%: 5 silver.
+                cost.MoneyCopper = 500;
+                cost.NextMastery = 40;
+                return true;
+
+            case 40:
+                // 40% -> 60%: 10 silver + 2 Strange Dust.
+                cost.MoneyCopper = 1000;
+                cost.ReagentEntry = 10940;
+                cost.ReagentCount = 2;
+                cost.NextMastery = 60;
+                return true;
+
+            case 60:
+                // 60% -> 80%: 15 silver + 1 Greater Magic Essence.
+                cost.MoneyCopper = 1500;
+                cost.ReagentEntry = 10939;
+                cost.ReagentCount = 1;
+                cost.NextMastery = 80;
+                return true;
+
+            case 80:
+                // 80% -> 100%: 25 silver + 1 Small Glimmering Shard.
+                cost.MoneyCopper = 2500;
+                cost.ReagentEntry = 10978;
+                cost.ReagentCount = 1;
+                cost.NextMastery = 100;
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    MasteryUpgradeResult UpgradeMastery(Player* player, uint32 itemEntry)
+    {
+        if (!player || itemEntry == 0)
+            return MasteryUpgradeResult::INVALID_ARGUMENT;
+
+        const uint32 guid = player->GetGUID().GetCounter();
+
+        QueryResult masteryResult = CharacterDatabase.Query(
+            "SELECT mastery_percent "
+            "FROM character_crucible_absorption "
+            "WHERE guid = {} AND item_entry = {} LIMIT 1",
+            guid,
+            itemEntry
+        );
+
+        if (!masteryResult)
+            return MasteryUpgradeResult::ESSENCE_NOT_FOUND;
+
+        Field* masteryFields = masteryResult->Fetch();
+        const uint32 currentMastery = masteryFields[0].Get<uint32>();
+
+        if (currentMastery != 20 &&
+            currentMastery != 40 &&
+            currentMastery != 60 &&
+            currentMastery != 80)
+        {
+            return MasteryUpgradeResult::INVALID_MASTERY_STATE;
+        }
+
+        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemEntry);
+        if (!proto)
+            return MasteryUpgradeResult::INVALID_ARGUMENT;
+
+        MasteryCost cost;
+        if (!GetMasteryUpgradeCost(proto, currentMastery, cost))
+            return MasteryUpgradeResult::UNSUPPORTED_BRACKET;
+
+        QueryResult contributionResult = CharacterDatabase.Query(
+            "SELECT 1 FROM character_crucible_contribution "
+            "WHERE guid = {} AND item_entry = {} LIMIT 1",
+            guid,
+            itemEntry
+        );
+
+        if (!contributionResult)
+            return MasteryUpgradeResult::INVALID_MASTERY_STATE;
+
+        if (!player->HasEnoughMoney(cost.MoneyCopper))
+            return MasteryUpgradeResult::NOT_ENOUGH_MONEY;
+
+        if (cost.ReagentEntry != 0 &&
+            !player->HasItemCount(cost.ReagentEntry, cost.ReagentCount, false))
+        {
+            return MasteryUpgradeResult::NOT_ENOUGH_REAGENT;
+        }
+
+        const float scale =
+            static_cast<float>(cost.NextMastery) /
+            static_cast<float>(currentMastery);
+
+        // Resource checks are complete before anything is consumed.
+        // The reagent is consumed from carried inventory, not the bank.
+        if (cost.ReagentEntry != 0)
+            player->DestroyItemCount(cost.ReagentEntry, cost.ReagentCount, true);
+
+        if (cost.MoneyCopper != 0)
+            player->ModifyMoney(-static_cast<int32>(cost.MoneyCopper));
+
+        CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+
+        // Scale from the current tier to the next tier instead of forcing every
+        // coefficient to a universal value. This preserves special ratios such as
+        // shield Armor:
+        //   4% -> 8% -> 12% -> 16% -> 20%
+        // while ordinary stats become:
+        //   20% -> 40% -> 60% -> 80% -> 100%.
+        CharacterDatabase.ExecuteOrAppend(
+            trans,
+            fmt::format(
+                "UPDATE character_crucible_contribution "
+                "SET coefficient = coefficient * {:.8f}, "
+                "absorbed_value = absorbed_value * {:.8f} "
+                "WHERE guid = {} AND item_entry = {}",
+                scale,
+                scale,
+                guid,
+                itemEntry
+            )
+        );
+
+        CharacterDatabase.ExecuteOrAppend(
+            trans,
+            fmt::format(
+                "UPDATE character_crucible_absorption "
+                "SET mastery_percent = {} "
+                "WHERE guid = {} AND item_entry = {} "
+                "AND mastery_percent = {}",
+                cost.NextMastery,
+                guid,
+                itemEntry,
+                currentMastery
+            )
+        );
+
+        CharacterDatabase.DirectCommitTransaction(trans);
+
+        Recalculate(player);
+        return MasteryUpgradeResult::SUCCESS;
     }
 
     void Unapply(Player* player)

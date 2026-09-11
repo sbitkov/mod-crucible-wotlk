@@ -107,6 +107,7 @@ public:
             { "absorb", HandleAbsorb, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::No },
             { "absorb-test", HandleAbsorbTest, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::No },
             { "unabsorb", HandleUnabsorb, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::No },
+            { "upgrade", HandleUpgrade, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::No },
             { "reset", HandleReset, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::No },
             { "stats", HandleStats, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::No },
             { "apply", HandleApply, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::No },
@@ -359,6 +360,145 @@ public:
             "Crucible DEBUG: removed absorption record for item {} and recalculated bonuses.",
             itemEntry
         );
+
+        return true;
+    }
+
+    static bool HandleUpgrade(ChatHandler* handler, uint32 itemEntry)
+    {
+        Player* player = handler->GetPlayer();
+        if (!player)
+            return false;
+
+        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemEntry);
+
+        uint32 oldMastery = 0;
+        QueryResult before = CharacterDatabase.Query(
+            "SELECT mastery_percent "
+            "FROM character_crucible_absorption "
+            "WHERE guid = {} AND item_entry = {} LIMIT 1",
+            player->GetGUID().GetCounter(),
+            itemEntry
+        );
+
+        if (before)
+            oldMastery = before->Fetch()[0].Get<uint32>();
+
+        Crucible::MasteryCost cost;
+        const bool hasCost =
+            proto && Crucible::GetMasteryUpgradeCost(proto, oldMastery, cost);
+
+        switch (Crucible::UpgradeMastery(player, itemEntry))
+        {
+            case Crucible::MasteryUpgradeResult::SUCCESS:
+            {
+                QueryResult after = CharacterDatabase.Query(
+                    "SELECT mastery_percent "
+                    "FROM character_crucible_absorption "
+                    "WHERE guid = {} AND item_entry = {} LIMIT 1",
+                    player->GetGUID().GetCounter(),
+                    itemEntry
+                );
+
+                uint32 newMastery = after
+                    ? after->Fetch()[0].Get<uint32>()
+                    : 0;
+
+                if (proto)
+                {
+                    handler->PSendSysMessage(
+                        "Crucible DEBUG: mastery upgraded {}%% -> {}%% for {} - {}.",
+                        oldMastery,
+                        newMastery,
+                        itemEntry,
+                        proto->Name1
+                    );
+                }
+                else
+                {
+                    handler->PSendSysMessage(
+                        "Crucible DEBUG: mastery upgraded {}%% -> {}%% for item {}.",
+                        oldMastery,
+                        newMastery,
+                        itemEntry
+                    );
+                }
+
+                if (hasCost)
+                {
+                    if (cost.ReagentEntry != 0)
+                    {
+                        ItemTemplate const* reagent =
+                            sObjectMgr->GetItemTemplate(cost.ReagentEntry);
+
+                        handler->PSendSysMessage(
+                            "Crucible DEBUG: paid {} silver + {}x {}.",
+                            cost.MoneyCopper / 100,
+                            cost.ReagentCount,
+                            reagent ? reagent->Name1 : "reagent"
+                        );
+                    }
+                    else
+                    {
+                        handler->PSendSysMessage(
+                            "Crucible DEBUG: paid {} silver.",
+                            cost.MoneyCopper / 100
+                        );
+                    }
+                }
+                break;
+            }
+
+            case Crucible::MasteryUpgradeResult::ESSENCE_NOT_FOUND:
+                handler->PSendSysMessage(
+                    "Crucible DEBUG: no stored essence exists for item {}.",
+                    itemEntry
+                );
+                break;
+
+            case Crucible::MasteryUpgradeResult::INVALID_MASTERY_STATE:
+                handler->PSendSysMessage(
+                    "Crucible DEBUG: item {} is already at 100%% mastery or has an "
+                    "unsupported mastery state.",
+                    itemEntry
+                );
+                break;
+
+            case Crucible::MasteryUpgradeResult::UNSUPPORTED_BRACKET:
+                handler->PSendSysMessage(
+                    "Crucible DEBUG: mastery economy is currently implemented only "
+                    "for RequiredLevel 1-19 items. Item {} is outside that bracket.",
+                    itemEntry
+                );
+                break;
+
+            case Crucible::MasteryUpgradeResult::NOT_ENOUGH_MONEY:
+                handler->PSendSysMessage(
+                    "Crucible DEBUG: not enough money. This upgrade requires {} silver.",
+                    hasCost ? cost.MoneyCopper / 100 : 0
+                );
+                break;
+
+            case Crucible::MasteryUpgradeResult::NOT_ENOUGH_REAGENT:
+            {
+                ItemTemplate const* reagent =
+                    hasCost && cost.ReagentEntry != 0
+                        ? sObjectMgr->GetItemTemplate(cost.ReagentEntry)
+                        : nullptr;
+
+                handler->PSendSysMessage(
+                    "Crucible DEBUG: missing reagent. This upgrade requires {}x {}.",
+                    hasCost ? cost.ReagentCount : 0,
+                    reagent ? reagent->Name1 : "required reagent"
+                );
+                break;
+            }
+
+            case Crucible::MasteryUpgradeResult::INVALID_ARGUMENT:
+            default:
+                handler->SendSysMessage("Crucible DEBUG: invalid mastery upgrade request.");
+                break;
+        }
 
         return true;
     }
