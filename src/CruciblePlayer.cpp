@@ -112,6 +112,16 @@ namespace
                 return "INVALID_ARGUMENT";
             case Crucible::AbsorbResult::ITEM_TEMPLATE_NOT_FOUND:
                 return "ITEM_TEMPLATE_NOT_FOUND";
+            case Crucible::AbsorbResult::QUALITY_TOO_LOW:
+                return "QUALITY_TOO_LOW";
+            case Crucible::AbsorbResult::ITEM_NOT_EQUIPMENT:
+                return "ITEM_NOT_EQUIPMENT";
+            case Crucible::AbsorbResult::ITEM_NOT_USABLE:
+                return "ITEM_NOT_USABLE";
+            case Crucible::AbsorbResult::ARMOR_TYPE_NOT_ALLOWED:
+                return "ARMOR_TYPE_NOT_ALLOWED";
+            case Crucible::AbsorbResult::WEAPON_TYPE_NOT_ALLOWED:
+                return "WEAPON_TYPE_NOT_ALLOWED";
             case Crucible::AbsorbResult::WEAPON_UNSUPPORTED:
                 return "WEAPON_UNSUPPORTED";
             case Crucible::AbsorbResult::ALREADY_ABSORBED:

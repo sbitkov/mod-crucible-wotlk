@@ -250,6 +250,134 @@ namespace
         }
     }
 
+    bool IsV04RangedWeaponSubclass(uint32 subClass)
+    {
+        switch (subClass)
+        {
+            case ITEM_SUBCLASS_WEAPON_BOW:
+            case ITEM_SUBCLASS_WEAPON_GUN:
+            case ITEM_SUBCLASS_WEAPON_CROSSBOW:
+            case ITEM_SUBCLASS_WEAPON_THROWN:
+            case ITEM_SUBCLASS_WEAPON_WAND:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    uint32 GetHistoricalArmorSubclass(Player const* player, ItemTemplate const* proto)
+    {
+        if (!player || !proto)
+            return ITEM_SUBCLASS_ARMOR_MISC;
+
+        const bool level40Plus = proto->RequiredLevel >= 40;
+
+        switch (player->getClass())
+        {
+            case CLASS_WARRIOR:
+            case CLASS_PALADIN:
+                return level40Plus
+                    ? ITEM_SUBCLASS_ARMOR_PLATE
+                    : ITEM_SUBCLASS_ARMOR_MAIL;
+
+            case CLASS_HUNTER:
+            case CLASS_SHAMAN:
+                return level40Plus
+                    ? ITEM_SUBCLASS_ARMOR_MAIL
+                    : ITEM_SUBCLASS_ARMOR_LEATHER;
+
+            case CLASS_ROGUE:
+            case CLASS_DRUID:
+                return ITEM_SUBCLASS_ARMOR_LEATHER;
+
+            case CLASS_MAGE:
+            case CLASS_PRIEST:
+            case CLASS_WARLOCK:
+                return ITEM_SUBCLASS_ARMOR_CLOTH;
+
+            case CLASS_DEATH_KNIGHT:
+                return ITEM_SUBCLASS_ARMOR_PLATE;
+
+            default:
+                return ITEM_SUBCLASS_ARMOR_MISC;
+        }
+    }
+
+    Crucible::AbsorbResult CheckV04Eligibility(
+        Player* player,
+        Item* item,
+        ItemTemplate const* proto)
+    {
+        using Crucible::AbsorbResult;
+
+        if (!player || !item || !proto)
+            return AbsorbResult::INVALID_ARGUMENT;
+
+        if (proto->Quality < ITEM_QUALITY_UNCOMMON)
+            return AbsorbResult::QUALITY_TOO_LOW;
+
+        if (proto->InventoryType == INVTYPE_NON_EQUIP)
+            return AbsorbResult::ITEM_NOT_EQUIPMENT;
+
+        if (proto->Class != ITEM_CLASS_ARMOR && proto->Class != ITEM_CLASS_WEAPON)
+            return AbsorbResult::ITEM_NOT_EQUIPMENT;
+
+        if (player->CanUseItem(proto) != EQUIP_ERR_OK)
+            return AbsorbResult::ITEM_NOT_USABLE;
+
+        if (proto->Class == ITEM_CLASS_WEAPON)
+        {
+            if (!IsV04RangedWeaponSubclass(proto->SubClass))
+                return AbsorbResult::WEAPON_UNSUPPORTED;
+
+            const uint32 weaponSkill = item->GetSkill();
+            if (weaponSkill != 0 && player->GetSkillValue(weaponSkill) == 0)
+                return AbsorbResult::WEAPON_TYPE_NOT_ALLOWED;
+
+            return AbsorbResult::SUCCESS;
+        }
+
+        if (proto->InventoryType == INVTYPE_CLOAK)
+            return AbsorbResult::SUCCESS;
+
+        if (proto->SubClass == ITEM_SUBCLASS_ARMOR_SHIELD)
+        {
+            if (player->IsClass(CLASS_PALADIN, CLASS_CONTEXT_EQUIP_SHIELDS) ||
+                player->IsClass(CLASS_WARRIOR, CLASS_CONTEXT_EQUIP_SHIELDS) ||
+                player->IsClass(CLASS_SHAMAN, CLASS_CONTEXT_EQUIP_SHIELDS))
+            {
+                return AbsorbResult::SUCCESS;
+            }
+
+            return AbsorbResult::ARMOR_TYPE_NOT_ALLOWED;
+        }
+
+        // Relic class restrictions are already enforced by Player::CanUseItem().
+        if (proto->InventoryType == INVTYPE_RELIC)
+            return AbsorbResult::SUCCESS;
+
+        if (proto->SubClass == ITEM_SUBCLASS_ARMOR_MISC)
+            return AbsorbResult::SUCCESS;
+
+        switch (proto->SubClass)
+        {
+            case ITEM_SUBCLASS_ARMOR_CLOTH:
+            case ITEM_SUBCLASS_ARMOR_LEATHER:
+            case ITEM_SUBCLASS_ARMOR_MAIL:
+            case ITEM_SUBCLASS_ARMOR_PLATE:
+                break;
+            default:
+                return AbsorbResult::ARMOR_TYPE_NOT_ALLOWED;
+        }
+
+        const uint32 expectedSubclass =
+            GetHistoricalArmorSubclass(player, proto);
+
+        if (proto->SubClass != expectedSubclass)
+            return AbsorbResult::ARMOR_TYPE_NOT_ALLOWED;
+
+        return AbsorbResult::SUCCESS;
+    }
     bool HasAbsorbedItem(uint32 guid, uint32 itemEntry)
     {
         QueryResult existing = CharacterDatabase.Query(
@@ -397,7 +525,24 @@ namespace Crucible
                 AddContribution(contributions, stat, float(sourceValue));
         }
 
-        AddContribution(contributions, StatId::ARMOR, float(proto->Armor));
+        if (proto->Class == ITEM_CLASS_ARMOR &&
+            proto->SubClass == ITEM_SUBCLASS_ARMOR_SHIELD)
+        {
+            if (proto->Armor != 0)
+            {
+                Crucible::Contribution shieldArmor;
+                shieldArmor.Stat = StatId::ARMOR;
+                shieldArmor.SourceValue = float(proto->Armor);
+                shieldArmor.Coefficient = 0.04f;
+                shieldArmor.AbsorbedValue =
+                    shieldArmor.SourceValue * shieldArmor.Coefficient;
+                contributions.push_back(shieldArmor);
+            }
+        }
+        else
+        {
+            AddContribution(contributions, StatId::ARMOR, float(proto->Armor));
+        }
         AddContribution(contributions, StatId::HOLY_RESISTANCE, float(proto->HolyRes));
         AddContribution(contributions, StatId::FIRE_RESISTANCE, float(proto->FireRes));
         AddContribution(contributions, StatId::NATURE_RESISTANCE, float(proto->NatureRes));
@@ -463,8 +608,9 @@ namespace Crucible
         if (!proto)
             return AbsorbResult::ITEM_TEMPLATE_NOT_FOUND;
 
-        if (proto->Class == ITEM_CLASS_WEAPON)
-            return AbsorbResult::WEAPON_UNSUPPORTED;
+        AbsorbResult eligibility = CheckV04Eligibility(player, item, proto);
+        if (eligibility != AbsorbResult::SUCCESS)
+            return eligibility;
 
         const uint32 guid = player->GetGUID().GetCounter();
 

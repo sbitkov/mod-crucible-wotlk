@@ -200,9 +200,39 @@ public:
                 );
                 break;
 
+            case Crucible::AbsorbResult::QUALITY_TOO_LOW:
+                handler->SendSysMessage(
+                    "Crucible: only Uncommon or higher quality equipment can be absorbed."
+                );
+                break;
+
+            case Crucible::AbsorbResult::ITEM_NOT_EQUIPMENT:
+                handler->SendSysMessage(
+                    "Crucible: only equippable armor and weapons can be absorbed."
+                );
+                break;
+
+            case Crucible::AbsorbResult::ITEM_NOT_USABLE:
+                handler->SendSysMessage(
+                    "Crucible: this item is not usable by this character."
+                );
+                break;
+
+            case Crucible::AbsorbResult::ARMOR_TYPE_NOT_ALLOWED:
+                handler->SendSysMessage(
+                    "Crucible: this armor type is outside the class gear-space for this item's progression tier."
+                );
+                break;
+
+            case Crucible::AbsorbResult::WEAPON_TYPE_NOT_ALLOWED:
+                handler->SendSysMessage(
+                    "Crucible: this character lacks proficiency with that weapon type."
+                );
+                break;
+
             case Crucible::AbsorbResult::WEAPON_UNSUPPORTED:
                 handler->SendSysMessage(
-                    "Crucible: weapon absorption is not implemented in v0.1."
+                    "Crucible: this weapon type is not supported yet."
                 );
                 break;
 

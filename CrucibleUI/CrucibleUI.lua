@@ -258,7 +258,12 @@ end
 
 local PREVIEW_ERROR_TEXT = {
     ALREADY_ABSORBED = "Already absorbed",
-    WEAPON_UNSUPPORTED = "Weapons are not supported",
+    QUALITY_TOO_LOW = "Only Uncommon or better equipment can be absorbed",
+    ITEM_NOT_EQUIPMENT = "This item is not eligible equipment",
+    ITEM_NOT_USABLE = "This character cannot use this item",
+    ARMOR_TYPE_NOT_ALLOWED = "Armor type is outside this class gear-space",
+    WEAPON_TYPE_NOT_ALLOWED = "Weapon proficiency is not available",
+    WEAPON_UNSUPPORTED = "This weapon type is not supported yet",
     ITEM_IN_TRADE = "Item is in trade",
     NO_SUPPORTED_STATS = "No supported stats",
     ITEM_TEMPLATE_NOT_FOUND = "Item template not found",
