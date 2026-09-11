@@ -46,19 +46,20 @@ The server is authoritative. The client UI identifies a concrete physical item b
 
 ```text
 mod-crucible-wotlk/
-РІвЂќСљРІвЂќР‚РІвЂќР‚ CrucibleUI/                  Client addon
-РІвЂќвЂљ   РІвЂќСљРІвЂќР‚РІвЂќР‚ CrucibleUI.toc
-РІвЂќвЂљ   РІвЂќвЂќРІвЂќР‚РІвЂќР‚ CrucibleUI.lua
-РІвЂќСљРІвЂќР‚РІвЂќР‚ data/
-РІвЂќвЂљ   РІвЂќвЂќРІвЂќР‚РІвЂќР‚ sql/
-РІвЂќвЂљ       РІвЂќвЂќРІвЂќР‚РІвЂќР‚ db-characters/
-РІвЂќвЂљ           РІвЂќвЂќРІвЂќР‚РІвЂќР‚ base/
-РІвЂќвЂљ               РІвЂќвЂќРІвЂќР‚РІвЂќР‚ crucible.sql
-РІвЂќСљРІвЂќР‚РІвЂќР‚ src/                         AzerothCore module source
-РІвЂќСљРІвЂќР‚РІвЂќР‚ apps/                        CI helpers
-РІвЂќСљРІвЂќР‚РІвЂќР‚ .github/                     GitHub workflows/templates
-РІвЂќСљРІвЂќР‚РІвЂќР‚ LICENSE
-РІвЂќвЂќРІвЂќР‚РІвЂќР‚ README.md
+|-- CrucibleUI/                  Client addon
+|   |-- CrucibleUI.toc
+|   `-- CrucibleUI.lua
+|-- data/
+|   `-- sql/
+|       `-- db-characters/
+|           `-- base/
+|               `-- crucible.sql
+|-- src/                         AzerothCore module source
+|-- apps/                        CI helpers
+|-- .github/                     GitHub workflows/templates
+|-- LICENSE
+`-- README.md
+
 ```
 
 ## Requirements
