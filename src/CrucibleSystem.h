@@ -60,7 +60,23 @@ namespace Crucible
         NATURE_RESISTANCE,
         FROST_RESISTANCE,
         SHADOW_RESISTANCE,
-        ARCANE_RESISTANCE
+        ARCANE_RESISTANCE,
+
+        // Keep new persisted StatId values appended to the enum.
+        // Existing character_crucible_contribution rows already store numeric IDs 1..38.
+        HOLY_SPELL_POWER,
+        FIRE_SPELL_POWER,
+        NATURE_SPELL_POWER,
+        FROST_SPELL_POWER,
+        SHADOW_SPELL_POWER,
+        ARCANE_SPELL_POWER
+    };
+
+    enum class EssenceType : uint8
+    {
+        BASE = 0,
+        RANDOM_PROPERTY = 1,
+        RANDOM_SUFFIX = 2
     };
 
     struct Contribution
@@ -69,6 +85,13 @@ namespace Crucible
         float SourceValue;
         float Coefficient;
         float AbsorbedValue;
+    };
+
+    struct EssenceComponent
+    {
+        EssenceType Type = EssenceType::BASE;
+        uint32 AffixId = 0;
+        std::vector<Contribution> Contributions;
     };
 
     struct AccumulatedStat
@@ -118,6 +141,11 @@ namespace Crucible
 
     std::vector<Contribution> ExtractContributions(ItemTemplate const* proto);
 
+    // Extracts the independently-mastered BASE and random-affix components
+    // from one concrete physical item instance. Components with no recognized
+    // Crucible contributions are omitted.
+    std::vector<EssenceComponent> ExtractEssenceComponents(Item* item);
+
     std::vector<AccumulatedStat> GetAccumulatedStats(Player* player);
 
     // Authoritative eligibility/contribution preview for a concrete physical Item.
@@ -141,9 +169,14 @@ namespace Crucible
         uint32 currentMastery,
         MasteryCost& cost);
 
-    // Advances one stored essence by exactly one mastery tier.
+    // Advances exactly one stored BASE/affix essence by one mastery tier.
+    // Component identity is (EssenceType, itemEntry, affixId).
     // No duplicate physical copy of the absorbed equipment is required.
-    MasteryUpgradeResult UpgradeMastery(Player* player, uint32 itemEntry);
+    MasteryUpgradeResult UpgradeMastery(
+        Player* player,
+        EssenceType essenceType,
+        uint32 itemEntry,
+        uint32 affixId);
 
     // Applies the current aggregated Crucible state from DB.
     // Any Crucible bonuses previously tracked for this live Player are removed first.

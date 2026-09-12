@@ -19,8 +19,12 @@ local essenceFilterMastery = 0
 local essenceSearchText = ""
 local essenceDisplayRows = {}
 
+local selectedEssenceType = nil
 local selectedEssenceEntry = nil
+local selectedEssenceAffix = nil
+local masteryPreviewType = nil
 local masteryPreviewEntry = nil
+local masteryPreviewAffix = nil
 local masteryPreviewResult = nil
 local masteryCurrent = nil
 local masteryNext = nil
@@ -326,7 +330,7 @@ local function RenderEssences()
             end)
 
             row:SetScript("OnClick", function()
-                OpenMasteryForEssence(essence.entry)
+                OpenMasteryForEssence(essence)
             end)
 
             table.insert(essenceDisplayRows, row)
@@ -496,7 +500,9 @@ local function FormatMoneyCopper(copper)
 end
 
 local function ResetMasteryPreview()
+    masteryPreviewType = nil
     masteryPreviewEntry = nil
+    masteryPreviewAffix = nil
     masteryPreviewResult = nil
     masteryCurrent = nil
     masteryNext = nil
@@ -513,12 +519,21 @@ local function ResetMasteryPreview()
 end
 
 local function RenderMasteryPreview()
-    if not selectedEssenceEntry or masteryPreviewEntry ~= selectedEssenceEntry then
+    if not selectedEssenceEntry or
+       masteryPreviewType ~= selectedEssenceType or
+       masteryPreviewEntry ~= selectedEssenceEntry or
+       masteryPreviewAffix ~= selectedEssenceAffix then
         return
     end
 
     local name, link, texture = GetEssenceItemInfo(selectedEssenceEntry)
-    masteryName:SetText(link or name)
+    local componentLabel = ""
+    if selectedEssenceType == 1 then
+        componentLabel = " [Random Property #" .. tostring(selectedEssenceAffix) .. "]"
+    elseif selectedEssenceType == 2 then
+        componentLabel = " [Random Suffix #" .. tostring(selectedEssenceAffix) .. "]"
+    end
+    masteryName:SetText((link or name) .. componentLabel)
     masteryIcon:SetTexture(texture or "Interface\\Icons\\INV_Misc_QuestionMark")
 
     if masteryPreviewResult == "MAX_MASTERY" then
@@ -577,28 +592,40 @@ local function RenderMasteryPreview()
     end
 end
 
-local function RequestMasteryPreview(itemEntry)
+local function RequestMasteryPreview(essenceType, itemEntry, affixId)
     ResetMasteryPreview()
+    masteryPreviewType = essenceType
     masteryPreviewEntry = itemEntry
+    masteryPreviewAffix = affixId
     masteryStatus:SetText("Loading mastery...")
 
     SendAddonMessage(
         ADDON_PREFIX,
-        "MASTERY_PREVIEW\t" .. tostring(itemEntry),
+        "MASTERY_PREVIEW\t" ..
+            tostring(essenceType) .. "\t" ..
+            tostring(itemEntry) .. "\t" ..
+            tostring(affixId),
         "WHISPER",
         UnitName("player")
     )
 end
 
-OpenMasteryForEssence = function(itemEntry)
-    selectedEssenceEntry = itemEntry
+OpenMasteryForEssence = function(essence)
+    selectedEssenceType = essence.essenceType
+    selectedEssenceEntry = essence.entry
+    selectedEssenceAffix = essence.affixId
     SetAbsorbModeVisible(false)
     masteryPanel:Show()
-    RequestMasteryPreview(itemEntry)
+    RequestMasteryPreview(
+        selectedEssenceType,
+        selectedEssenceEntry,
+        selectedEssenceAffix)
 end
 
 masteryBackButton:SetScript("OnClick", function()
+    selectedEssenceType = nil
     selectedEssenceEntry = nil
+    selectedEssenceAffix = nil
     masteryPanel:Hide()
     ResetMasteryPreview()
     SetAbsorbModeVisible(true)
@@ -616,7 +643,10 @@ masteryUpgradeButton:SetScript("OnClick", function()
 
     SendAddonMessage(
         ADDON_PREFIX,
-        "MASTERY_UPGRADE\t" .. tostring(selectedEssenceEntry),
+        "MASTERY_UPGRADE\t" ..
+            tostring(selectedEssenceType) .. "\t" ..
+            tostring(selectedEssenceEntry) .. "\t" ..
+            tostring(selectedEssenceAffix),
         "WHISPER",
         UnitName("player")
     )
@@ -1217,40 +1247,60 @@ listener:SetScript("OnEvent", function(self, event, ...)
 
     local parts = SplitTabs(message)
 
-    if parts[1] == "MASTERY_BEGIN" and parts[2] and parts[3] then
-        local entry = tonumber(parts[2])
-        if not selectedEssenceEntry or entry ~= selectedEssenceEntry then
+    if parts[1] == "MASTERY_BEGIN" and
+       parts[2] and parts[3] and parts[4] and parts[5] then
+        local essenceType = tonumber(parts[2])
+        local entry = tonumber(parts[3])
+        local affixId = tonumber(parts[4])
+
+        if essenceType ~= selectedEssenceType or
+           entry ~= selectedEssenceEntry or
+           affixId ~= selectedEssenceAffix then
             return
         end
 
+        masteryPreviewType = essenceType
         masteryPreviewEntry = entry
-        masteryPreviewResult = parts[3]
+        masteryPreviewAffix = affixId
+        masteryPreviewResult = parts[5]
         masteryStats = {}
 
-        if parts[4] then masteryCurrent = tonumber(parts[4]) end
-        if parts[5] then masteryNext = tonumber(parts[5]) end
-        if parts[6] then masteryMoney = tonumber(parts[6]) or 0 end
-        if parts[7] then masteryReagentEntry = tonumber(parts[7]) or 0 end
-        if parts[8] then masteryReagentCount = tonumber(parts[8]) or 0 end
+        if parts[6] then masteryCurrent = tonumber(parts[6]) end
+        if parts[7] then masteryNext = tonumber(parts[7]) end
+        if parts[8] then masteryMoney = tonumber(parts[8]) or 0 end
+        if parts[9] then masteryReagentEntry = tonumber(parts[9]) or 0 end
+        if parts[10] then masteryReagentCount = tonumber(parts[10]) or 0 end
         return
     end
 
-    if parts[1] == "MASTERY_STAT" and parts[2] and parts[3] and parts[4] then
-        local entry = tonumber(parts[2])
-        if entry ~= masteryPreviewEntry then
+    if parts[1] == "MASTERY_STAT" and
+       parts[2] and parts[3] and parts[4] and parts[5] and parts[6] then
+        local essenceType = tonumber(parts[2])
+        local entry = tonumber(parts[3])
+        local affixId = tonumber(parts[4])
+
+        if essenceType ~= masteryPreviewType or
+           entry ~= masteryPreviewEntry or
+           affixId ~= masteryPreviewAffix then
             return
         end
 
         table.insert(masteryStats, {
-            name = parts[3],
-            value = parts[4],
+            name = parts[5],
+            value = parts[6],
         })
         return
     end
 
-    if parts[1] == "MASTERY_END" and parts[2] then
-        local entry = tonumber(parts[2])
-        if entry ~= masteryPreviewEntry then
+    if parts[1] == "MASTERY_END" and
+       parts[2] and parts[3] and parts[4] then
+        local essenceType = tonumber(parts[2])
+        local entry = tonumber(parts[3])
+        local affixId = tonumber(parts[4])
+
+        if essenceType ~= masteryPreviewType or
+           entry ~= masteryPreviewEntry or
+           affixId ~= masteryPreviewAffix then
             return
         end
 
@@ -1260,29 +1310,35 @@ listener:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
-    if parts[1] == "MASTERY_RESULT" and parts[2] and parts[3] then
-        local entry = tonumber(parts[2])
-        if not selectedEssenceEntry or entry ~= selectedEssenceEntry then
+    if parts[1] == "MASTERY_RESULT" and
+       parts[2] and parts[3] and parts[4] and parts[5] then
+        local essenceType = tonumber(parts[2])
+        local entry = tonumber(parts[3])
+        local affixId = tonumber(parts[4])
+
+        if essenceType ~= selectedEssenceType or
+           entry ~= selectedEssenceEntry or
+           affixId ~= selectedEssenceAffix then
             return
         end
 
         masteryUpgradePending = false
         masteryUpgradeButton:SetText("Upgrade")
 
-        if parts[3] == "SUCCESS" then
+        if parts[5] == "SUCCESS" then
             masteryStatus:SetText("Upgraded")
             RequestEssences()
-        elseif parts[3] == "NOT_ENOUGH_MONEY" then
+        elseif parts[5] == "NOT_ENOUGH_MONEY" then
             masteryStatus:SetText("Not enough money")
             RenderMasteryPreview()
-        elseif parts[3] == "NOT_ENOUGH_REAGENT" then
+        elseif parts[5] == "NOT_ENOUGH_REAGENT" then
             masteryStatus:SetText("Missing reagent")
             RenderMasteryPreview()
-        elseif parts[3] == "UNSUPPORTED_BRACKET" then
+        elseif parts[5] == "UNSUPPORTED_BRACKET" then
             masteryStatus:SetText("Unsupported bracket")
             RenderMasteryPreview()
         else
-            masteryStatus:SetText("Upgrade failed: " .. tostring(parts[3]))
+            masteryStatus:SetText("Upgrade failed: " .. tostring(parts[5]))
             RenderMasteryPreview()
         end
         return
@@ -1294,17 +1350,22 @@ listener:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
-    if parts[1] == "ESSENCE_ROW" and parts[2] and parts[3] then
+    if parts[1] == "ESSENCE_ROW" and
+       parts[2] and parts[3] and parts[4] and parts[5] then
         if not essencesReceiving then
             return
         end
 
-        local entry = tonumber(parts[2])
-        local mastery = tonumber(parts[3])
+        local essenceType = tonumber(parts[2])
+        local entry = tonumber(parts[3])
+        local affixId = tonumber(parts[4])
+        local mastery = tonumber(parts[5])
 
-        if entry and mastery then
+        if essenceType and entry and affixId and mastery then
             table.insert(essenceRows, {
+                essenceType = essenceType,
                 entry = entry,
+                affixId = affixId,
                 mastery = mastery,
             })
         end

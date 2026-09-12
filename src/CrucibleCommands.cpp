@@ -388,7 +388,11 @@ public:
         const bool hasCost =
             proto && Crucible::GetMasteryUpgradeCost(proto, oldMastery, cost);
 
-        switch (Crucible::UpgradeMastery(player, itemEntry))
+        switch (Crucible::UpgradeMastery(
+            player,
+            Crucible::EssenceType::BASE,
+            itemEntry,
+            0))
         {
             case Crucible::MasteryUpgradeResult::SUCCESS:
             {

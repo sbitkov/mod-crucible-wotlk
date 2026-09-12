@@ -1,8 +1,12 @@
 #include "CrucibleSystem.h"
 
 #include "DatabaseEnv.h"
+#include "SpellMgr.h"
+#include "SpellInfo.h"
+#include "DBCStores.h"
 #include "Item.h"
 #include "ItemTemplate.h"
+#include "Log.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "QueryResult.h"
@@ -96,6 +100,42 @@ namespace
         contribution.Coefficient = Crucible::BASE_COEFFICIENT;
         contribution.AbsorbedValue = sourceValue * contribution.Coefficient;
         contributions.push_back(contribution);
+    }
+
+
+    void ExtractEnchantContributions(
+        SpellItemEnchantmentEntry const* enchant,
+        float suffixScaledValue,
+        std::vector<Crucible::Contribution>& contributions)
+    {
+        if (!enchant)
+            return;
+
+        for (uint32 effectIndex = 0;
+             effectIndex < MAX_SPELL_ITEM_ENCHANTMENT_EFFECTS;
+             ++effectIndex)
+        {
+            const uint32 type = enchant->type[effectIndex];
+            const uint32 arg = enchant->spellid[effectIndex];
+
+            if (type == ITEM_ENCHANTMENT_TYPE_STAT)
+            {
+                Crucible::StatId stat;
+                if (!TryMapItemMod(arg, stat))
+                    continue;
+
+                float sourceValue = float(enchant->amount[effectIndex]);
+
+                // RandomSuffix stat enchants commonly store amount=0 and derive
+                // the instance value from AllocationPct * suffixFactor / 10000.
+                if (sourceValue == 0.0f && suffixScaledValue != 0.0f)
+                    sourceValue = suffixScaledValue;
+
+                AddContribution(contributions, stat, sourceValue);
+                continue;
+            }
+
+        }
     }
 
     void ApplyStat(Player* player, Crucible::StatId stat, int32 amount, bool apply)
@@ -379,79 +419,135 @@ namespace
 
         return AbsorbResult::SUCCESS;
     }
-    bool HasAbsorbedItem(uint32 guid, uint32 itemEntry)
+    bool HasAbsorbedComponent(
+        uint32 guid,
+        uint32 itemEntry,
+        Crucible::EssenceType essenceType,
+        uint32 affixId)
     {
         QueryResult existing = CharacterDatabase.Query(
             "SELECT 1 FROM character_crucible_absorption "
-            "WHERE guid = {} AND item_entry = {} LIMIT 1",
+            "WHERE guid = {} AND essence_type = {} AND item_entry = {} "
+            "AND affix_id = {} LIMIT 1",
             guid,
-            itemEntry
+            static_cast<uint32>(essenceType),
+            itemEntry,
+            affixId
         );
 
         return bool(existing);
     }
 
+    std::vector<Crucible::EssenceComponent> GetNewEssenceComponents(
+        uint32 guid,
+        uint32 itemEntry,
+        std::vector<Crucible::EssenceComponent> const& extracted)
+    {
+        std::vector<Crucible::EssenceComponent> result;
+
+        for (Crucible::EssenceComponent const& component : extracted)
+        {
+            if (component.Contributions.empty())
+                continue;
+
+            if (HasAbsorbedComponent(
+                    guid,
+                    itemEntry,
+                    component.Type,
+                    component.AffixId))
+            {
+                continue;
+            }
+
+            result.push_back(component);
+        }
+
+        return result;
+    }
+
     CharacterDatabaseTransaction BuildAbsorptionTransaction(
         uint32 guid,
         uint32 itemEntry,
-        std::vector<Crucible::Contribution> const& contributions)
+        std::vector<Crucible::EssenceComponent> const& components)
     {
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
 
-        CharacterDatabase.ExecuteOrAppend(
-            trans,
-            fmt::format(
-                "INSERT INTO character_crucible_absorption "
-                "(guid, item_entry, mastery_percent) VALUES ({}, {}, 20)",
-                guid,
-                itemEntry
-            )
-        );
-
-        for (Crucible::Contribution const& contribution : contributions)
+        for (Crucible::EssenceComponent const& component : components)
         {
             CharacterDatabase.ExecuteOrAppend(
                 trans,
                 fmt::format(
-                    "INSERT INTO character_crucible_contribution "
-                    "(guid, item_entry, stat_id, source_value, coefficient, absorbed_value) "
-                    "VALUES ({}, {}, {}, {:.4f}, {:.6f}, {:.4f})",
+                    "INSERT INTO character_crucible_absorption "
+                    "(guid, essence_type, item_entry, affix_id, mastery_percent) "
+                    "VALUES ({}, {}, {}, {}, 20)",
                     guid,
+                    static_cast<uint32>(component.Type),
                     itemEntry,
-                    static_cast<uint16>(contribution.Stat),
-                    contribution.SourceValue,
-                    contribution.Coefficient,
-                    contribution.AbsorbedValue
+                    component.AffixId
                 )
             );
+
+            for (Crucible::Contribution const& contribution :
+                 component.Contributions)
+            {
+                CharacterDatabase.ExecuteOrAppend(
+                    trans,
+                    fmt::format(
+                        "INSERT INTO character_crucible_contribution "
+                        "(guid, essence_type, item_entry, affix_id, stat_id, "
+                        "source_value, coefficient, absorbed_value) "
+                        "VALUES ({}, {}, {}, {}, {}, {:.4f}, {:.6f}, {:.4f})",
+                        guid,
+                        static_cast<uint32>(component.Type),
+                        itemEntry,
+                        component.AffixId,
+                        static_cast<uint16>(contribution.Stat),
+                        contribution.SourceValue,
+                        contribution.Coefficient,
+                        contribution.AbsorbedValue
+                    )
+                );
+            }
         }
 
         return trans;
     }
 
-    void RemoveAbsorptionRowsSynchronously(uint32 guid, uint32 itemEntry)
+    void RemoveAbsorptionRowsSynchronously(
+        uint32 guid,
+        uint32 itemEntry,
+        std::vector<Crucible::EssenceComponent> const& components)
     {
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
 
-        CharacterDatabase.ExecuteOrAppend(
-            trans,
-            fmt::format(
-                "DELETE FROM character_crucible_contribution "
-                "WHERE guid = {} AND item_entry = {}",
-                guid,
-                itemEntry
-            )
-        );
+        for (Crucible::EssenceComponent const& component : components)
+        {
+            CharacterDatabase.ExecuteOrAppend(
+                trans,
+                fmt::format(
+                    "DELETE FROM character_crucible_contribution "
+                    "WHERE guid = {} AND essence_type = {} AND item_entry = {} "
+                    "AND affix_id = {}",
+                    guid,
+                    static_cast<uint32>(component.Type),
+                    itemEntry,
+                    component.AffixId
+                )
+            );
 
-        CharacterDatabase.ExecuteOrAppend(
-            trans,
-            fmt::format(
-                "DELETE FROM character_crucible_absorption "
-                "WHERE guid = {} AND item_entry = {}",
-                guid,
-                itemEntry
-            )
-        );
+            CharacterDatabase.ExecuteOrAppend(
+                trans,
+                fmt::format(
+                    "DELETE FROM character_crucible_absorption "
+                    "WHERE guid = {} AND essence_type = {} AND item_entry = {} "
+                    "AND affix_id = {}",
+                    guid,
+                    static_cast<uint32>(component.Type),
+                    itemEntry,
+                    component.AffixId
+                )
+            );
+        }
 
         CharacterDatabase.DirectCommitTransaction(trans);
     }
@@ -501,6 +597,12 @@ namespace Crucible
             case StatId::FROST_RESISTANCE: return "Frost Resistance";
             case StatId::SHADOW_RESISTANCE: return "Shadow Resistance";
             case StatId::ARCANE_RESISTANCE: return "Arcane Resistance";
+            case StatId::HOLY_SPELL_POWER: return "Holy Spell Power";
+            case StatId::FIRE_SPELL_POWER: return "Fire Spell Power";
+            case StatId::NATURE_SPELL_POWER: return "Nature Spell Power";
+            case StatId::FROST_SPELL_POWER: return "Frost Spell Power";
+            case StatId::SHADOW_SPELL_POWER: return "Shadow Spell Power";
+            case StatId::ARCANE_SPELL_POWER: return "Arcane Spell Power";
         }
 
         return "Unknown";
@@ -552,6 +654,104 @@ namespace Crucible
         AddContribution(contributions, StatId::ARCANE_RESISTANCE, float(proto->ArcaneRes));
 
         return contributions;
+    }
+
+    std::vector<EssenceComponent> ExtractEssenceComponents(Item* item)
+    {
+        std::vector<EssenceComponent> components;
+
+        if (!item)
+            return components;
+
+        ItemTemplate const* proto = item->GetTemplate();
+        if (!proto)
+            return components;
+
+        std::vector<Contribution> baseContributions =
+            ExtractContributions(proto);
+
+        if (!baseContributions.empty())
+        {
+            EssenceComponent base;
+            base.Type = EssenceType::BASE;
+            base.AffixId = 0;
+            base.Contributions = std::move(baseContributions);
+            components.push_back(std::move(base));
+        }
+
+        const int32 randomPropertyId = item->GetItemRandomPropertyId();
+        if (randomPropertyId == 0)
+            return components;
+
+        EssenceComponent affix;
+
+        if (randomPropertyId > 0)
+        {
+            affix.Type = EssenceType::RANDOM_PROPERTY;
+            affix.AffixId = static_cast<uint32>(randomPropertyId);
+
+            ItemRandomPropertiesEntry const* property =
+                sItemRandomPropertiesStore.LookupEntry(affix.AffixId);
+
+            if (!property)
+                return components;
+
+            for (uint32 i = 0; i < MAX_ITEM_ENCHANTMENT_EFFECTS; ++i)
+            {
+                const uint32 enchantId = property->Enchantment[i];
+                if (enchantId == 0)
+                    continue;
+
+                SpellItemEnchantmentEntry const* enchant =
+                    sSpellItemEnchantmentStore.LookupEntry(enchantId);
+
+                ExtractEnchantContributions(
+                    enchant,
+                    0.0f,
+                    affix.Contributions);
+            }
+        }
+        else
+        {
+            affix.Type = EssenceType::RANDOM_SUFFIX;
+            affix.AffixId = static_cast<uint32>(-randomPropertyId);
+
+            ItemRandomSuffixEntry const* suffix =
+                sItemRandomSuffixStore.LookupEntry(affix.AffixId);
+
+            if (!suffix)
+                return components;
+
+            const uint32 suffixFactor = item->GetItemSuffixFactor();
+
+            for (uint32 i = 0; i < MAX_ITEM_ENCHANTMENT_EFFECTS; ++i)
+            {
+                const uint32 enchantId = suffix->Enchantment[i];
+                if (enchantId == 0)
+                    continue;
+
+                const float scaledValue =
+                    suffixFactor != 0
+                        ? float(
+                            (static_cast<uint64>(suffix->AllocationPct[i]) *
+                             static_cast<uint64>(suffixFactor)) / 10000)
+                        : 0.0f;
+
+                SpellItemEnchantmentEntry const* enchant =
+                    sSpellItemEnchantmentStore.LookupEntry(enchantId);
+
+                ExtractEnchantContributions(
+                    enchant,
+                    scaledValue,
+                    affix.Contributions);
+            }
+        }
+
+        // Unknown/unsupported affix effects do not create an essence component.
+        if (!affix.Contributions.empty())
+            components.push_back(std::move(affix));
+
+        return components;
     }
 
     std::vector<AccumulatedStat> GetAccumulatedStats(Player* player)
@@ -613,46 +813,106 @@ namespace Crucible
         if (eligibility != AbsorbResult::SUCCESS)
             return eligibility;
 
-        const uint32 guid = player->GetGUID().GetCounter();
-
-        if (HasAbsorbedItem(guid, itemEntry))
-            return AbsorbResult::ALREADY_ABSORBED;
-
         if (item->IsInTrade())
             return AbsorbResult::ITEM_IN_TRADE;
 
-        contributions = ExtractContributions(proto);
-        if (contributions.empty())
+        const uint32 guid = player->GetGUID().GetCounter();
+
+        std::vector<EssenceComponent> extracted =
+            ExtractEssenceComponents(item);
+
+
+        if (extracted.empty())
             return AbsorbResult::NO_SUPPORTED_STATS;
 
-        return AbsorbResult::SUCCESS;
+        std::vector<EssenceComponent> newComponents =
+            GetNewEssenceComponents(guid, itemEntry, extracted);
+
+        if (newComponents.empty())
+            return AbsorbResult::ALREADY_ABSORBED;
+
+        // The current client protocol is still a flat preview. Show only the
+        // contributions that this concrete absorption would newly unlock.
+        for (EssenceComponent const& component : newComponents)
+        {
+            for (Contribution const& contribution : component.Contributions)
+            {
+                bool merged = false;
+
+                for (Contribution& existing : contributions)
+                {
+                    if (existing.Stat != contribution.Stat)
+                        continue;
+
+                    existing.SourceValue += contribution.SourceValue;
+                    existing.AbsorbedValue += contribution.AbsorbedValue;
+                    merged = true;
+                    break;
+                }
+
+                if (!merged)
+                    contributions.push_back(contribution);
+            }
+        }
+
+        return contributions.empty()
+            ? AbsorbResult::NO_SUPPORTED_STATS
+            : AbsorbResult::SUCCESS;
     }
 
     AbsorbResult AbsorbItem(Player* player, Item* item)
     {
-        std::vector<Contribution> contributions;
-        AbsorbResult previewResult = PreviewItem(player, item, contributions);
+        if (!player || !item)
+            return AbsorbResult::INVALID_ARGUMENT;
 
-        if (previewResult != AbsorbResult::SUCCESS)
-            return previewResult;
+        ItemTemplate const* proto = item->GetTemplate();
+        if (!proto)
+            return AbsorbResult::ITEM_TEMPLATE_NOT_FOUND;
+
+        AbsorbResult eligibility = CheckV04Eligibility(player, item, proto);
+        if (eligibility != AbsorbResult::SUCCESS)
+            return eligibility;
+
+        if (item->IsInTrade())
+            return AbsorbResult::ITEM_IN_TRADE;
 
         const uint32 itemEntry = item->GetEntry();
         const uint32 guid = player->GetGUID().GetCounter();
 
+        std::vector<EssenceComponent> extracted =
+            ExtractEssenceComponents(item);
+
+
+        if (extracted.empty())
+            return AbsorbResult::NO_SUPPORTED_STATS;
+
+        std::vector<EssenceComponent> newComponents =
+            GetNewEssenceComponents(guid, itemEntry, extracted);
+
+
+        // Nothing new means the physical item must remain untouched.
+        if (newComponents.empty())
+            return AbsorbResult::ALREADY_ABSORBED;
+
+
         CharacterDatabaseTransaction trans =
-            BuildAbsorptionTransaction(guid, itemEntry, contributions);
+            BuildAbsorptionTransaction(guid, itemEntry, newComponents);
         CharacterDatabase.DirectCommitTransaction(trans);
 
-        // Destroy exactly one unit from the concrete Item* supplied by the caller.
+
+        // Destroy exactly one unit only after at least one new component was
+        // committed for this concrete physical item.
         uint32 destroyCount = 1;
         player->DestroyItemCount(item, destroyCount, true);
 
-        // DB cannot be atomic with the in-memory inventory operation. If destruction
-        // unexpectedly fails, remove the just-committed snapshot immediately so the
-        // player can never retain both the item and the permanent gain.
+        // Roll back only the component rows inserted by this attempt. Existing
+        // BASE or affix progression for the same item_entry must never be lost.
         if (destroyCount != 0)
         {
-            RemoveAbsorptionRowsSynchronously(guid, itemEntry);
+            RemoveAbsorptionRowsSynchronously(
+                guid,
+                itemEntry,
+                newComponents);
             return AbsorbResult::DESTROY_FAILED;
         }
 
@@ -712,19 +972,37 @@ namespace Crucible
         }
     }
 
-    MasteryUpgradeResult UpgradeMastery(Player* player, uint32 itemEntry)
+    MasteryUpgradeResult UpgradeMastery(
+        Player* player,
+        EssenceType essenceType,
+        uint32 itemEntry,
+        uint32 affixId)
     {
         if (!player || itemEntry == 0)
             return MasteryUpgradeResult::INVALID_ARGUMENT;
+
+        const uint32 essenceTypeValue = static_cast<uint32>(essenceType);
+        if (essenceTypeValue > static_cast<uint32>(EssenceType::RANDOM_SUFFIX))
+            return MasteryUpgradeResult::INVALID_ARGUMENT;
+
+        // BASE is always (type=BASE, affix=0); random affixes always have an id.
+        if ((essenceType == EssenceType::BASE && affixId != 0) ||
+            (essenceType != EssenceType::BASE && affixId == 0))
+        {
+            return MasteryUpgradeResult::INVALID_ARGUMENT;
+        }
 
         const uint32 guid = player->GetGUID().GetCounter();
 
         QueryResult masteryResult = CharacterDatabase.Query(
             "SELECT mastery_percent "
             "FROM character_crucible_absorption "
-            "WHERE guid = {} AND item_entry = {} LIMIT 1",
+            "WHERE guid = {} AND essence_type = {} AND item_entry = {} "
+            "AND affix_id = {} LIMIT 1",
             guid,
-            itemEntry
+            essenceTypeValue,
+            itemEntry,
+            affixId
         );
 
         if (!masteryResult)
@@ -751,9 +1029,12 @@ namespace Crucible
 
         QueryResult contributionResult = CharacterDatabase.Query(
             "SELECT 1 FROM character_crucible_contribution "
-            "WHERE guid = {} AND item_entry = {} LIMIT 1",
+            "WHERE guid = {} AND essence_type = {} AND item_entry = {} "
+            "AND affix_id = {} LIMIT 1",
             guid,
-            itemEntry
+            essenceTypeValue,
+            itemEntry,
+            affixId
         );
 
         if (!contributionResult)
@@ -773,7 +1054,6 @@ namespace Crucible
             static_cast<float>(currentMastery);
 
         // Resource checks are complete before anything is consumed.
-        // The reagent is consumed from carried inventory, not the bank.
         if (cost.ReagentEntry != 0)
             player->DestroyItemCount(cost.ReagentEntry, cost.ReagentCount, true);
 
@@ -782,23 +1062,22 @@ namespace Crucible
 
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
 
-        // Scale from the current tier to the next tier instead of forcing every
-        // coefficient to a universal value. This preserves special ratios such as
-        // shield Armor:
-        //   4% -> 8% -> 12% -> 16% -> 20%
-        // while ordinary stats become:
-        //   20% -> 40% -> 60% -> 80% -> 100%.
+        // Scale only this exact essence component. BASE and every concrete affix
+        // on the same item_entry keep independent mastery.
         CharacterDatabase.ExecuteOrAppend(
             trans,
             fmt::format(
                 "UPDATE character_crucible_contribution "
                 "SET coefficient = coefficient * {:.8f}, "
                 "absorbed_value = absorbed_value * {:.8f} "
-                "WHERE guid = {} AND item_entry = {}",
+                "WHERE guid = {} AND essence_type = {} AND item_entry = {} "
+                "AND affix_id = {}",
                 scale,
                 scale,
                 guid,
-                itemEntry
+                essenceTypeValue,
+                itemEntry,
+                affixId
             )
         );
 
@@ -807,11 +1086,13 @@ namespace Crucible
             fmt::format(
                 "UPDATE character_crucible_absorption "
                 "SET mastery_percent = {} "
-                "WHERE guid = {} AND item_entry = {} "
-                "AND mastery_percent = {}",
+                "WHERE guid = {} AND essence_type = {} AND item_entry = {} "
+                "AND affix_id = {} AND mastery_percent = {}",
                 cost.NextMastery,
                 guid,
+                essenceTypeValue,
                 itemEntry,
+                affixId,
                 currentMastery
             )
         );

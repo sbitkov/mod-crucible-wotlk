@@ -247,14 +247,21 @@ namespace
         player->Whisper("CRUCIBLE\tESSENCES_BEGIN", LANG_ADDON, player);
     }
 
-    void SendCrucibleEssenceRow(Player* player, uint32 itemEntry, uint32 masteryPercent)
+    void SendCrucibleEssenceRow(
+        Player* player,
+        Crucible::EssenceType essenceType,
+        uint32 itemEntry,
+        uint32 affixId,
+        uint32 masteryPercent)
     {
         if (!player)
             return;
 
         std::string message = fmt::format(
-            "CRUCIBLE\tESSENCE_ROW\t{}\t{}",
+            "CRUCIBLE\tESSENCE_ROW\t{}\t{}\t{}\t{}",
+            static_cast<uint32>(essenceType),
             itemEntry,
+            affixId,
             masteryPercent);
 
         player->Whisper(message, LANG_ADDON, player);
@@ -284,60 +291,129 @@ namespace
         return "UNKNOWN";
     }
 
-    bool TryParseItemEntry(std::string_view text, uint32& itemEntry)
+    struct EssenceIdentity
     {
-        itemEntry = 0;
+        Crucible::EssenceType Type = Crucible::EssenceType::BASE;
+        uint32 ItemEntry = 0;
+        uint32 AffixId = 0;
+    };
+
+    bool TryParseUint32(std::string_view text, uint32& value)
+    {
+        value = 0;
         if (text.empty())
             return false;
 
         const char* begin = text.data();
         const char* end = text.data() + text.size();
-        const auto result = std::from_chars(begin, end, itemEntry, 10);
-
-        return result.ec == std::errc{} && result.ptr == end && itemEntry != 0;
+        const auto result = std::from_chars(begin, end, value, 10);
+        return result.ec == std::errc{} && result.ptr == end;
     }
 
-    void SendMasteryPreview(Player* player, uint32 itemEntry)
+    bool TryParseEssenceIdentity(std::string_view text, EssenceIdentity& identity)
+    {
+        const std::size_t first = text.find('\t');
+        if (first == std::string_view::npos)
+            return false;
+
+        const std::size_t second = text.find('\t', first + 1);
+        if (second == std::string_view::npos)
+            return false;
+
+        if (text.find('\t', second + 1) != std::string_view::npos)
+            return false;
+
+        uint32 typeValue = 0;
+        uint32 itemEntry = 0;
+        uint32 affixId = 0;
+
+        if (!TryParseUint32(text.substr(0, first), typeValue) ||
+            !TryParseUint32(text.substr(first + 1, second - first - 1), itemEntry) ||
+            !TryParseUint32(text.substr(second + 1), affixId))
+        {
+            return false;
+        }
+
+        if (typeValue > static_cast<uint32>(Crucible::EssenceType::RANDOM_SUFFIX) ||
+            itemEntry == 0)
+        {
+            return false;
+        }
+
+        Crucible::EssenceType type =
+            static_cast<Crucible::EssenceType>(typeValue);
+
+        if ((type == Crucible::EssenceType::BASE && affixId != 0) ||
+            (type != Crucible::EssenceType::BASE && affixId == 0))
+        {
+            return false;
+        }
+
+        identity.Type = type;
+        identity.ItemEntry = itemEntry;
+        identity.AffixId = affixId;
+        return true;
+    }
+
+    void SendMasteryPreview(Player* player, EssenceIdentity const& identity)
     {
         if (!player)
             return;
 
         const uint32 guid = player->GetGUID().GetCounter();
+        const uint32 typeValue = static_cast<uint32>(identity.Type);
+
+        auto SendEnd = [&]()
+        {
+            player->Whisper(
+                fmt::format(
+                    "CRUCIBLE\tMASTERY_END\t{}\t{}\t{}",
+                    typeValue,
+                    identity.ItemEntry,
+                    identity.AffixId),
+                LANG_ADDON,
+                player);
+        };
 
         QueryResult masteryResult = CharacterDatabase.Query(
             "SELECT mastery_percent "
             "FROM character_crucible_absorption "
-            "WHERE guid = {} AND item_entry = {} LIMIT 1",
+            "WHERE guid = {} AND essence_type = {} AND item_entry = {} "
+            "AND affix_id = {} LIMIT 1",
             guid,
-            itemEntry
+            typeValue,
+            identity.ItemEntry,
+            identity.AffixId
         );
 
         if (!masteryResult)
         {
             player->Whisper(
-                fmt::format("CRUCIBLE\tMASTERY_BEGIN\t{}\tESSENCE_NOT_FOUND", itemEntry),
+                fmt::format(
+                    "CRUCIBLE\tMASTERY_BEGIN\t{}\t{}\t{}\tESSENCE_NOT_FOUND",
+                    typeValue,
+                    identity.ItemEntry,
+                    identity.AffixId),
                 LANG_ADDON,
                 player);
-            player->Whisper(
-                fmt::format("CRUCIBLE\tMASTERY_END\t{}", itemEntry),
-                LANG_ADDON,
-                player);
+            SendEnd();
             return;
         }
 
         const uint32 currentMastery = masteryResult->Fetch()[0].Get<uint32>();
-        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemEntry);
+        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(identity.ItemEntry);
 
         if (!proto)
         {
             player->Whisper(
-                fmt::format("CRUCIBLE\tMASTERY_BEGIN\t{}\tINVALID_ARGUMENT", itemEntry),
+                fmt::format(
+                    "CRUCIBLE\tMASTERY_BEGIN\t{}\t{}\t{}\tINVALID_ARGUMENT",
+                    typeValue,
+                    identity.ItemEntry,
+                    identity.AffixId),
                 LANG_ADDON,
                 player);
-            player->Whisper(
-                fmt::format("CRUCIBLE\tMASTERY_END\t{}", itemEntry),
-                LANG_ADDON,
-                player);
+            SendEnd();
             return;
         }
 
@@ -352,23 +428,24 @@ namespace
 
             player->Whisper(
                 fmt::format(
-                    "CRUCIBLE\tMASTERY_BEGIN\t{}\t{}\t{}\t0\t0\t0\t0",
-                    itemEntry,
+                    "CRUCIBLE\tMASTERY_BEGIN\t{}\t{}\t{}\t{}\t{}\t0\t0\t0\t0",
+                    typeValue,
+                    identity.ItemEntry,
+                    identity.AffixId,
                     state,
                     currentMastery),
                 LANG_ADDON,
                 player);
-            player->Whisper(
-                fmt::format("CRUCIBLE\tMASTERY_END\t{}", itemEntry),
-                LANG_ADDON,
-                player);
+            SendEnd();
             return;
         }
 
         player->Whisper(
             fmt::format(
-                "CRUCIBLE\tMASTERY_BEGIN\t{}\tSUCCESS\t{}\t{}\t{}\t{}\t{}",
-                itemEntry,
+                "CRUCIBLE\tMASTERY_BEGIN\t{}\t{}\t{}\tSUCCESS\t{}\t{}\t{}\t{}\t{}",
+                typeValue,
+                identity.ItemEntry,
+                identity.AffixId,
                 currentMastery,
                 cost.NextMastery,
                 cost.MoneyCopper,
@@ -380,10 +457,12 @@ namespace
         QueryResult contributionResult = CharacterDatabase.Query(
             "SELECT stat_id, absorbed_value "
             "FROM character_crucible_contribution "
-            "WHERE guid = {} AND item_entry = {} "
-            "ORDER BY stat_id",
+            "WHERE guid = {} AND essence_type = {} AND item_entry = {} "
+            "AND affix_id = {} ORDER BY stat_id",
             guid,
-            itemEntry
+            typeValue,
+            identity.ItemEntry,
+            identity.AffixId
         );
 
         if (contributionResult)
@@ -402,8 +481,10 @@ namespace
 
                 player->Whisper(
                     fmt::format(
-                        "CRUCIBLE\tMASTERY_STAT\t{}\t{}\t{:.4f}",
-                        itemEntry,
+                        "CRUCIBLE\tMASTERY_STAT\t{}\t{}\t{}\t{}\t{:.4f}",
+                        typeValue,
+                        identity.ItemEntry,
+                        identity.AffixId,
                         Crucible::GetStatName(stat),
                         delta),
                     LANG_ADDON,
@@ -412,10 +493,7 @@ namespace
             while (contributionResult->NextRow());
         }
 
-        player->Whisper(
-            fmt::format("CRUCIBLE\tMASTERY_END\t{}", itemEntry),
-            LANG_ADDON,
-            player);
+        SendEnd();
     }
 }
 
@@ -520,10 +598,10 @@ public:
             const uint32 guid = player->GetGUID().GetCounter();
 
             QueryResult result = CharacterDatabase.Query(
-                "SELECT item_entry, mastery_percent "
+                "SELECT essence_type, item_entry, affix_id, mastery_percent "
                 "FROM character_crucible_absorption "
                 "WHERE guid = {} "
-                "ORDER BY item_entry",
+                "ORDER BY item_entry, essence_type, affix_id",
                 guid
             );
 
@@ -535,10 +613,18 @@ public:
                 do
                 {
                     Field* fields = result->Fetch();
-                    const uint32 itemEntry = fields[0].Get<uint32>();
-                    const uint32 masteryPercent = fields[1].Get<uint32>();
+                    const Crucible::EssenceType essenceType =
+                        static_cast<Crucible::EssenceType>(fields[0].Get<uint8>());
+                    const uint32 itemEntry = fields[1].Get<uint32>();
+                    const uint32 affixId = fields[2].Get<uint32>();
+                    const uint32 masteryPercent = fields[3].Get<uint32>();
 
-                    SendCrucibleEssenceRow(player, itemEntry, masteryPercent);
+                    SendCrucibleEssenceRow(
+                        player,
+                        essenceType,
+                        itemEntry,
+                        affixId,
+                        masteryPercent);
                     ++count;
                 }
                 while (result->NextRow());
@@ -557,40 +643,46 @@ public:
 
         if (command == MASTERY_PREVIEW_COMMAND)
         {
-            uint32 itemEntry = 0;
-            if (!TryParseItemEntry(argument, itemEntry))
+            EssenceIdentity identity;
+            if (!TryParseEssenceIdentity(argument, identity))
             {
                 LOG_INFO(
                     "module.crucible",
-                    "Crucible MASTERY_PREVIEW: player='{}' invalid item entry='{}'",
+                    "Crucible MASTERY_PREVIEW: player='{}' invalid identity='{}'",
                     player->GetName(),
                     argument);
                 return;
             }
 
-            SendMasteryPreview(player, itemEntry);
+            SendMasteryPreview(player, identity);
             return;
         }
 
         if (command == MASTERY_UPGRADE_COMMAND)
         {
-            uint32 itemEntry = 0;
-            if (!TryParseItemEntry(argument, itemEntry))
+            EssenceIdentity identity;
+            if (!TryParseEssenceIdentity(argument, identity))
                 return;
 
             Crucible::MasteryUpgradeResult result =
-                Crucible::UpgradeMastery(player, itemEntry);
+                Crucible::UpgradeMastery(
+                    player,
+                    identity.Type,
+                    identity.ItemEntry,
+                    identity.AffixId);
 
             player->Whisper(
                 fmt::format(
-                    "CRUCIBLE\tMASTERY_RESULT\t{}\t{}",
-                    itemEntry,
+                    "CRUCIBLE\tMASTERY_RESULT\t{}\t{}\t{}\t{}",
+                    static_cast<uint32>(identity.Type),
+                    identity.ItemEntry,
+                    identity.AffixId,
                     GetMasteryUpgradeResultName(result)),
                 LANG_ADDON,
                 player);
 
             if (result == Crucible::MasteryUpgradeResult::SUCCESS)
-                SendMasteryPreview(player, itemEntry);
+                SendMasteryPreview(player, identity);
 
             return;
         }
