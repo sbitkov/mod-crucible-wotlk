@@ -1,149 +1,399 @@
-# mod-crucible-wotlk
+# Crucible
 
-AzerothCore WotLK module that adds the **Crucible**: a permanent character-progression system based on absorbing equipment.
+Crucible is an AzerothCore module that changes individual character progression by allowing characters to permanently absorb stats from items.
 
-The project deliberately scales the **player upward** instead of scaling the world downward.
+It is designed primarily with solo play in mind, giving the player another form of long-term progression beyond ordinary gear upgrades.
 
 ## Preface
 
-Crucible is **inspired by the progression ideas of the Synastria private server**. I liked the general idea of turning equipment into permanent character progression and wanted to explore my own implementation of that concept for AzerothCore.
+The module was inspired by the "Attunement" subsystem of the Synastria private server.
 
-This project is an independent implementation. It was designed and developed separately for this module without relying on Synastria's source code. The mechanics, server-side architecture, item-instance transport, preview protocol, and client UI in this repository were built specifically for this project.
+However, Crucible is a completely new implementation that does not copy Synastria's attunement system and was developed without relying on Synastria's source code.
 
-## Status
+### AI usage
 
-Current version: **v0.3**
+Most of the module's source code was generated with the assistance of AI.
 
-The current implementation supports:
+The resulting code was reviewed, tested, debugged, and integrated by a human developer (myself).
 
-- a physical Crucible game object (`entry 900000`);
-- per-character, per-`item_entry` absorption tracking;
-- permanent stat contributions stored with fractional precision;
-- aggregate-then-truncate application of permanent bonuses;
-- exact physical item-instance selection by GUID;
-- server-authoritative absorption;
-- server-authoritative preview of the stats an item will grant before absorption;
-- a client UI with a virtual item slot, item icon, item name, preview, reservation feedback, and an `Absorb` button;
-- a separate read-only **Progression Overview** window showing accumulated Crucible bonuses;
-- progression data shown as both fractional `Stored` values and integer `Applied` values;
-- a `/cruciblestats` command for opening the Progression Overview from anywhere;
-- a `Progression` button inside the physical Crucible absorption window;
-- a server-authoritative shared accumulated-stat backend used by both `.crucible stats` and the addon UI;
-- explicit server results such as `SUCCESS`, `ALREADY_ABSORBED`, `WEAPON_UNSUPPORTED`, and `NO_SUPPORTED_STATS`.
+## Functionality
 
-Weapons are intentionally unsupported at this stage.
+Crucible is an in-world object that allows the player to "absorb" the essence of an item. For now, it is possible to summon the Crucible with the chat command: `.gobject add temp 900000`.
 
-## How absorption works
+When an item is successfully absorbed, the physical item is destroyed and its essence is permanently stored for that character inside the Crucible.
 
-For supported item stats, the Crucible currently stores:
+The first absorption grants the character 20% of the item's supported stats and is saved as part of permanent character progression.
+
+Mastery of an already absorbed essence can then be improved further:
+
+- 20%
+- 40%
+- 60%
+- 80%
+- 100%
+
+Further mastery upgrades require gold and enchanting materials.
+
+### Essence components
+
+Since v0.7, Crucible distinguishes between several components of an item:
+
+- `BASE` — stats belonging to the base item itself.
+- `RANDOM_PROPERTY` — a specific random property rolled on that specific base item.
+- `RANDOM_SUFFIX` — a specific random suffix rolled on that specific base item.
+
+These components are stored and mastered independently.
+
+For example, if the player has already absorbed the base essence of an item but later finds another copy with a new random affix, Crucible can absorb only that new affix component.
+
+Likewise, a random affix can be improved from 20% to 100% without changing the mastery level of the base item.
+
+An item is not destroyed if it is not eligible for absorption or if it contains no new absorbable essence components.
+
+### Supported items
+
+Crucible currently supports equippable armor items of Uncommon quality or higher.
+
+Eligibility follows the character's normal class equipment progression. For example:
+
+- Warriors and Paladins use Mail before level 40 and Plate afterwards.
+- Hunters and Shamans use Leather before level 40 and Mail afterwards.
+- Rogues and Druids use Leather.
+- Mages, Priests, and Warlocks use Cloth.
+- Death Knights use Plate.
+- Cloaks are treated as universally usable armor.
+- Shields and class-specific equipment still respect normal usability rules.
+
+The item must also be usable by the character under the current Crucible eligibility rules.
+
+Weapons are not currently supported.
+
+### Stat absorption
+
+Ordinary supported stats use the following mastery progression:
+
+| Mastery | Absorbed value |
+|---|---:|
+| 20% | 20% of the source stat |
+| 40% | 40% |
+| 60% | 60% |
+| 80% | 80% |
+| 100% | 100% |
+
+Fractional contributions are stored in the database.
+
+They are added together before the final value is converted to the integer value used by the WoW 3.3.5a core.
+
+For example, two stored contributions of `+0.6 Stamina` and `+0.4 Stamina` become `+1 Stamina` rather than both being individually truncated to zero.
+
+Shield Armor is intentionally scaled differently:
+
+| Mastery | Shield Armor absorbed |
+|---|---:|
+| 20% | 4% |
+| 40% | 8% |
+| 60% | 12% |
+| 80% | 16% |
+| 100% | 20% |
+
+Other supported shield stats follow the ordinary mastery progression.
+
+### Current mastery costs
+
+The current mastery upgrade path is implemented for items with `RequiredLevel` 1–19.
+
+| Upgrade | Cost |
+|---|---|
+| 20% → 40% | 5 silver |
+| 40% → 60% | 10 silver + 2 Strange Dust |
+| 60% → 80% | 15 silver + 1 Greater Magic Essence |
+| 80% → 100% | 25 silver + 1 Small Glimmering Shard |
+
+This limited level bracket is intentional. It provides a small, ChromieCraft-esque vertical slice in which the progression system can be tested before costs and progression are extended to the rest of the game.
+
+## User interface
+
+The user interface is provided by the included `CrucibleUI` addon.
+
+The addon is located in:
+
+`CrucibleUI/`
+
+Copy the entire directory into the WoW client:
+
+`<WoW client>/Interface/AddOns/CrucibleUI`
+
+The resulting layout should look like:
 
 ```text
-absorbed value = source value * 0.20
+Interface/
+└── AddOns/
+    └── CrucibleUI/
+        ├── CrucibleUI.toc
+        └── CrucibleUI.lua
 ```
 
-The fractional values are persisted in the character database.
+The addon contains the absorption interface, Stored Essences catalogue, mastery interface, and progression overview.
 
-Permanent bonuses are aggregated first and only then converted to the integer values applied by the WoW 3.3.5a core. This means separate contributions such as `+0.6 Stamina` and `+0.4 Stamina` combine into `+1 Stamina` rather than being truncated independently.
+Progression data remains server-authoritative. The addon requests data from the server and does not calculate permanent Crucible stats itself.
 
-The server is authoritative. The client UI identifies a concrete physical item by GUID, requests a preview from the server, and only sends the absorption request when the player confirms it.
-
-Absorption remains tied to interaction with the physical Crucible game object. The Progression Overview is read-only and can be opened independently without granting access to absorption.
-
-## Repository layout
-
-```text
-mod-crucible-wotlk/
-|-- CrucibleUI/                  Client addon
-|   |-- CrucibleUI.toc
-|   `-- CrucibleUI.lua
-|-- data/
-|   `-- sql/
-|       `-- db-characters/
-|           `-- base/
-|               `-- crucible.sql
-|-- src/                         AzerothCore module source
-|-- apps/                        CI helpers
-|-- .github/                     GitHub workflows/templates
-|-- LICENSE
-`-- README.md
-```
-
-## Requirements
+## Dependencies / Compatibility
 
 ### Server
 
-- AzerothCore WotLK 3.3.5a
-- module installed under the AzerothCore `modules` directory
+Crucible is developed for:
+
+- AzerothCore
+- World of Warcraft: Wrath of the Lich King 3.3.5a
+
+The module should be placed inside the AzerothCore `modules` directory and compiled together with AzerothCore.
+
+The repository is developed and tested against a current AzerothCore checkout. Compatibility with older AzerothCore revisions is not guaranteed.
 
 ### Client
 
-The current Crucible UI relies on the client-side environment used during development:
+The current Crucible addon is developed for a WoW 3.3.5a client, build `12340`.
+
+It currently relies on:
 
 - WarcraftXL
-- WrathClassicAPI through the WarcraftXL integration
-- WoW 3.3.5a client build 12340
+- WrathClassicAPI through WarcraftXL integration
 
-`WrathClassicAPI` provides the physical item-instance API used by the addon, including `C_Item.GetItemGUID()` and `C_Item.GetItemLocation()`.
+WrathClassicAPI is used to obtain the GUID of a concrete physical item instance through APIs such as `C_Item.GetItemGUID()`.
 
-Those projects are **dependencies** and are not vendored into this repository.
+These client-side dependencies are not bundled with this repository.
 
-## Client addon installation
+## Installation
 
-Copy the repository's `CrucibleUI` directory to:
+### Server installation
 
-```text
-<WoW client>\Interface\AddOns\CrucibleUI
-```
-
-The final structure should be:
+1. Clone or copy the repository into the AzerothCore modules directory:
 
 ```text
-Interface\AddOns\CrucibleUI\CrucibleUI.toc
-Interface\AddOns\CrucibleUI\CrucibleUI.lua
+<AzerothCore>/modules/mod-crucible
 ```
 
-Restart the client after replacing the addon during development.
+2. Re-run CMake so AzerothCore detects the module.
 
-## Development notes
+3. Build AzerothCore normally.
 
-The transport currently uses WoW addon messages with the `CRUCIBLE` prefix.
+4. Install the newly built server binaries.
 
-Important messages include:
+5. Start `worldserver`.
+
+The module contains its character database schema and AzerothCore database update files. Database migrations are therefore handled through AzerothCore's normal module database update system.
+
+### Client installation
+
+1. Install WarcraftXL and its WrathClassicAPI integration.
+
+2. Copy:
 
 ```text
-Client -> Server
-CRUCIBLE    PREVIEW    <item GUID>
-CRUCIBLE    ABSORB     <item GUID>
-CRUCIBLE    STATS
-
-Server -> Client
-CRUCIBLE    PREVIEW_BEGIN    <result>    <item GUID>
-CRUCIBLE    PREVIEW_STAT     <item GUID> <stat name> <value>
-CRUCIBLE    PREVIEW_END      <item GUID>
-CRUCIBLE    RESULT           <result>    <item GUID>
-CRUCIBLE    STATS_BEGIN
-CRUCIBLE    STATS_ROW        <stat id>   <stat name> <stored> <applied>
-CRUCIBLE    STATS_END
+mod-crucible/CrucibleUI
 ```
 
-The client does not calculate Crucible contributions itself. Preview values and actual absorption use the same server-side contribution logic.
+to:
 
-Accumulated progression is also server-authoritative. Both `.crucible stats` and the addon Progression Overview read from the same `GetAccumulatedStats()` backend.
+```text
+<WoW client>/Interface/AddOns/CrucibleUI
+```
 
-## Development process
+3. Restart the client if the addon was installed or replaced while the game was running.
 
-Development of this project was carried out with the assistance of AI tools. AI was used for code drafting, research, debugging support, and discussion of implementation approaches.
+4. Make sure `CrucibleUI` is enabled in the addon list.
 
-AI output was not treated as authoritative or accepted blindly. I manually reviewed the code, built the project myself, and tested the implemented behavior in-game throughout development. Functional changes were verified through hands-on testing before being accepted into the project.
+### Spawning the Crucible
 
-## License
+The Crucible uses gameobject entry:
 
-This project is licensed under **GNU General Public License version 2 or, at your option, any later version** (`GPL-2.0-or-later`).
+```text
+900000
+```
 
-### Licensing history
+A server administrator can spawn it using the normal AzerothCore gameobject commands or place it permanently into the world.
 
-The `v0.1` tag accidentally inherited the MIT `LICENSE` file from the AzerothCore module skeleton used to bootstrap the repository. That historical tag is intentionally left unchanged.
+Interaction with the physical Crucible object is required for item absorption and mastery operations.
 
-Starting with the v0.2 development line, the project is explicitly licensed as `GPL-2.0-or-later`.
+## Character progression storage
 
-Third-party dependencies retain their own licenses.
+Crucible progression is stored per character.
+
+The character database stores both:
+
+- which essence components have been absorbed;
+- the fractional stat contribution belonging to each component.
+
+Since v0.7, the identity of an essence is composed of:
+
+```text
+character
+essence type
+item entry
+affix id
+```
+
+This allows a base item and its individual random affixes to coexist as separate permanent progression records.
+
+The accumulated bonuses are recalculated from the database and applied to the character by the server.
+
+## Technical overview
+
+The module is divided into several layers.
+
+### AzerothCore module
+
+The server-side implementation is written as an AzerothCore C++ module.
+
+The core gameplay logic is responsible for:
+
+- item eligibility;
+- extracting supported stats;
+- extracting random properties and random suffixes;
+- storing absorbed components;
+- mastery upgrades;
+- aggregating permanent character stats;
+- applying and removing those stats from the player.
+
+Persistent data is stored in the AzerothCore character database.
+
+The two principal Crucible tables are:
+
+```text
+character_crucible_absorption
+character_crucible_contribution
+```
+
+`character_crucible_absorption` stores the identity and mastery level of an absorbed essence.
+
+`character_crucible_contribution` stores the individual fractional stat contributions produced by that essence.
+
+### Random affix extraction
+
+Random-affix support uses the WotLK DBC data already available to AzerothCore.
+
+For a concrete item instance, Crucible reads its random property identifier and suffix factor.
+
+Random Properties are resolved through `ItemRandomProperties` and `SpellItemEnchantment` data.
+
+Random Suffixes are resolved through `ItemRandomSuffix`, including their allocation values and the concrete item's suffix factor.
+
+Only contributions that Crucible understands are stored.
+
+A physical item may therefore contain:
+
+- a BASE essence;
+- a RANDOM_PROPERTY essence;
+- a RANDOM_SUFFIX essence;
+
+depending on the item.
+
+### Stat application
+
+Stored fractional values are aggregated by stat before being applied to the player.
+
+The module uses AzerothCore's existing player/stat APIs where possible, including normal stat modifiers, combat ratings, attack power, spell power, resistances, armor, and related player modifiers.
+
+This is intentional: Crucible attempts to use the existing AzerothCore stat system rather than implementing a parallel combat-stat system.
+
+### Player lifecycle
+
+Permanent Crucible bonuses are recalculated from persistent character data when necessary.
+
+The module keeps track of the bonuses it has applied during the current player session so that they can be removed and recalculated without stacking duplicate copies of the same progression.
+
+### Client/server communication
+
+The addon communicates with the server using addon messages with the `CRUCIBLE` prefix.
+
+The server remains authoritative.
+
+The client can request operations such as:
+
+- previewing an absorption;
+- confirming absorption;
+- requesting stored essences;
+- requesting mastery information;
+- upgrading mastery;
+- requesting accumulated progression.
+
+The client sends the GUID of the concrete physical item instance rather than merely an item entry when performing normal UI absorption.
+
+This is important for random-affix support, because two physical copies of the same base item may contain different essences.
+
+## Developer and debug commands
+
+Crucible includes several GM/debug commands intended primarily for testing and module development.
+
+They use the `.crucible` command namespace.
+
+### `.crucible inspect <item_entry>`
+
+Displays the supported BASE contributions Crucible sees on an item template.
+
+Useful when checking whether a particular item's ordinary stats are understood by the extractor.
+
+### `.crucible absorb <item_entry>`
+
+Performs a server-side absorption attempt for the specified item entry.
+
+This is primarily a development shortcut. Normal gameplay should use the Crucible world object and addon interface.
+
+### `.crucible absorb-test <item_entry>`
+
+Tests the absorption path without using the normal addon workflow.
+
+Useful for debugging eligibility and contribution extraction.
+
+### `.crucible unabsorb <item_entry>`
+
+Removes the stored absorption record for the specified item during testing.
+
+This modifies persistent Crucible progression and should therefore be used carefully.
+
+### `.crucible upgrade <item_entry>`
+
+Attempts a mastery upgrade through the debug command interface.
+
+This command currently targets the BASE essence of the specified item.
+
+Random-property and random-suffix mastery should normally be tested through the component-aware addon UI.
+
+### `.crucible reset`
+
+Deletes all Crucible absorption/contribution records for the current character and recalculates its bonuses.
+
+This is destructive.
+
+### `.crucible stats`
+
+Displays the character's accumulated Crucible stats.
+
+For each stat it reports the stored fractional total and the integer amount currently applied to the character.
+
+### `.crucible apply`
+
+Applies/recalculates the character's stored Crucible bonuses.
+
+Primarily useful for debugging the stat application lifecycle.
+
+### `.crucible unapply`
+
+Temporarily removes the currently applied Crucible bonuses from the character without deleting the stored database progression.
+
+### `.crucible recalc`
+
+Removes the currently tracked Crucible bonuses and rebuilds them from the current database state.
+
+This is useful after manually inspecting or modifying Crucible database records during development.
+
+## Known limitations
+
+Crucible is still an early version of the module, so several limitations currently exist.
+
+- Weapons are not currently supported for absorption.
+- The current mastery upgrade cost progression is implemented only for items with `RequiredLevel` 1–19.
+- Not every possible WotLK item effect can currently be converted into permanent Crucible progression.
+- Some random affixes therefore produce no supported Crucible contribution.
+- School-specific spell damage bonuses, such as Frost Spell Damage, are not currently absorbed. AzerothCore represents these bonuses through spell-school aura mechanics rather than the normal permanent stat APIs used by Crucible, so support has been deliberately postponed rather than implemented through a fragile workaround.
+- The project is still under active development. Bugs are expected, and bug reports are appreciated.
