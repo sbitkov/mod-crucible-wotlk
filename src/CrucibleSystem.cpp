@@ -287,6 +287,16 @@ namespace
             case StatId::ARCANE_RESISTANCE:
                 player->HandleStatFlatModifier(UNIT_MOD_RESISTANCE_ARCANE, BASE_VALUE, float(amount), apply);
                 break;
+
+            case StatId::HOLY_SPELL_POWER:
+            case StatId::FIRE_SPELL_POWER:
+            case StatId::NATURE_SPELL_POWER:
+            case StatId::FROST_SPELL_POWER:
+            case StatId::SHADOW_SPELL_POWER:
+            case StatId::ARCANE_SPELL_POWER:
+                // Reserved for future school-specific spell power support.
+                // These values are intentionally not applied in v0.7.
+                break;
         }
     }
 
