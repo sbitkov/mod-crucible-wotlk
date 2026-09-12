@@ -102,7 +102,6 @@ namespace
         contributions.push_back(contribution);
     }
 
-
     void ExtractEnchantContributions(
         SpellItemEnchantmentEntry const* enchant,
         float suffixScaledValue,
@@ -821,7 +820,6 @@ namespace Crucible
         std::vector<EssenceComponent> extracted =
             ExtractEssenceComponents(item);
 
-
         if (extracted.empty())
             return AbsorbResult::NO_SUPPORTED_STATS;
 
@@ -882,23 +880,19 @@ namespace Crucible
         std::vector<EssenceComponent> extracted =
             ExtractEssenceComponents(item);
 
-
         if (extracted.empty())
             return AbsorbResult::NO_SUPPORTED_STATS;
 
         std::vector<EssenceComponent> newComponents =
             GetNewEssenceComponents(guid, itemEntry, extracted);
 
-
         // Nothing new means the physical item must remain untouched.
         if (newComponents.empty())
             return AbsorbResult::ALREADY_ABSORBED;
 
-
         CharacterDatabaseTransaction trans =
             BuildAbsorptionTransaction(guid, itemEntry, newComponents);
         CharacterDatabase.DirectCommitTransaction(trans);
-
 
         // Destroy exactly one unit only after at least one new component was
         // committed for this concrete physical item.
