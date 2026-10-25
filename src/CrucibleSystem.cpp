@@ -300,21 +300,6 @@ namespace
         }
     }
 
-    bool IsV04RangedWeaponSubclass(uint32 subClass)
-    {
-        switch (subClass)
-        {
-            case ITEM_SUBCLASS_WEAPON_BOW:
-            case ITEM_SUBCLASS_WEAPON_GUN:
-            case ITEM_SUBCLASS_WEAPON_CROSSBOW:
-            case ITEM_SUBCLASS_WEAPON_THROWN:
-            case ITEM_SUBCLASS_WEAPON_WAND:
-                return true;
-            default:
-                return false;
-        }
-    }
-
     uint32 GetHistoricalArmorSubclass(Player const* player, ItemTemplate const* proto)
     {
         if (!player || !proto)
@@ -377,9 +362,6 @@ namespace
 
         if (proto->Class == ITEM_CLASS_WEAPON)
         {
-            if (!IsV04RangedWeaponSubclass(proto->SubClass))
-                return AbsorbResult::WEAPON_UNSUPPORTED;
-
             const uint32 weaponSkill = item->GetSkill();
             if (weaponSkill != 0 && player->GetSkillValue(weaponSkill) == 0)
                 return AbsorbResult::WEAPON_TYPE_NOT_ALLOWED;
@@ -934,46 +916,88 @@ namespace Crucible
         if (!proto)
             return false;
 
-        // Economy is intentionally defined only for the first playtest bracket.
-        // Higher brackets will be added from observed gameplay data later.
-        if (proto->RequiredLevel < 1 || proto->RequiredLevel > 19)
-            return false;
+        const uint32 progressionLevel =
+            proto->RequiredLevel != 0 ? proto->RequiredLevel : proto->ItemLevel;
 
-        switch (currentMastery)
+        if (progressionLevel >= 1 && progressionLevel <= 19)
         {
-            case 20:
-                // 20% -> 40%: 5 silver.
-                cost.MoneyCopper = 500;
-                cost.NextMastery = 40;
-                return true;
+            switch (currentMastery)
+            {
+                case 20:
+                    // 20% -> 40%: 5 silver.
+                    cost.MoneyCopper = 500;
+                    cost.NextMastery = 40;
+                    return true;
 
-            case 40:
-                // 40% -> 60%: 10 silver + 2 Strange Dust.
-                cost.MoneyCopper = 1000;
-                cost.ReagentEntry = 10940;
-                cost.ReagentCount = 2;
-                cost.NextMastery = 60;
-                return true;
+                case 40:
+                    // 40% -> 60%: 10 silver + 2 Strange Dust.
+                    cost.MoneyCopper = 1000;
+                    cost.ReagentEntry = 10940;
+                    cost.ReagentCount = 2;
+                    cost.NextMastery = 60;
+                    return true;
 
-            case 60:
-                // 60% -> 80%: 15 silver + 1 Greater Magic Essence.
-                cost.MoneyCopper = 1500;
-                cost.ReagentEntry = 10939;
-                cost.ReagentCount = 1;
-                cost.NextMastery = 80;
-                return true;
+                case 60:
+                    // 60% -> 80%: 15 silver + 1 Greater Magic Essence.
+                    cost.MoneyCopper = 1500;
+                    cost.ReagentEntry = 10939;
+                    cost.ReagentCount = 1;
+                    cost.NextMastery = 80;
+                    return true;
 
-            case 80:
-                // 80% -> 100%: 25 silver + 1 Small Glimmering Shard.
-                cost.MoneyCopper = 2500;
-                cost.ReagentEntry = 10978;
-                cost.ReagentCount = 1;
-                cost.NextMastery = 100;
-                return true;
+                case 80:
+                    // 80% -> 100%: 25 silver + 1 Small Glimmering Shard.
+                    cost.MoneyCopper = 2500;
+                    cost.ReagentEntry = 10978;
+                    cost.ReagentCount = 1;
+                    cost.NextMastery = 100;
+                    return true;
 
-            default:
-                return false;
+                default:
+                    return false;
+            }
         }
+
+        if (progressionLevel >= 20 && progressionLevel <= 29)
+        {
+            switch (currentMastery)
+            {
+                case 20:
+                    // 20% -> 40%: 15 silver.
+                    cost.MoneyCopper = 1500;
+                    cost.NextMastery = 40;
+                    return true;
+
+                case 40:
+                    // 40% -> 60%: 30 silver + 2 Soul Dust.
+                    cost.MoneyCopper = 3000;
+                    cost.ReagentEntry = 11083;
+                    cost.ReagentCount = 2;
+                    cost.NextMastery = 60;
+                    return true;
+
+                case 60:
+                    // 60% -> 80%: 45 silver + 1 Greater Astral Essence.
+                    cost.MoneyCopper = 4500;
+                    cost.ReagentEntry = 11082;
+                    cost.ReagentCount = 1;
+                    cost.NextMastery = 80;
+                    return true;
+
+                case 80:
+                    // 80% -> 100%: 75 silver + 1 Small Glowing Shard.
+                    cost.MoneyCopper = 7500;
+                    cost.ReagentEntry = 11138;
+                    cost.ReagentCount = 1;
+                    cost.NextMastery = 100;
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        return false;
     }
 
     MasteryUpgradeResult UpgradeMastery(
