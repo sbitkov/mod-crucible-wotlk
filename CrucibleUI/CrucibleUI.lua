@@ -15,6 +15,73 @@ local statsRows = {}
 
 local essencesReceiving = false
 local essenceRows = {}
+-- Authoritative per-character mastery snapshot. Never infer eligibility from this data.
+local tooltipEssenceCache = {}
+local tooltipCacheReady = false
+local incomingTooltipCache = nil
+
+local function ParseTooltipItemIdentity(link)
+    if type(link) ~= "string" then
+        return nil
+    end
+
+    local itemData = string.match(link, "item:([%d:%-]+)")
+    if not itemData then
+        return nil
+    end
+
+    local fields = {}
+    for field in string.gmatch(itemData .. ":", "([^:]*):") do
+        table.insert(fields, field)
+    end
+
+    local entry = tonumber(fields[1])
+    if not entry or entry <= 0 then
+        return nil
+    end
+
+    -- WotLK hyperlink field 7 is randomPropertyId: positive=property,
+    -- negative=suffix. DB stores the absolute suffix id separately.
+    local randomId = tonumber(fields[7]) or 0
+    local affixType = randomId > 0 and 1 or (randomId < 0 and 2 or nil)
+    return entry, affixType, math.abs(randomId)
+end
+
+local function AddCrucibleItemTooltip(tooltip)
+    if not tooltipCacheReady then
+        return
+    end
+
+    local _, link = tooltip:GetItem()
+    local entry, affixType, affixId = ParseTooltipItemIdentity(link)
+    if not entry then
+        return
+    end
+
+    -- Do not label non-equipment (consumables, reagents, etc.).
+    local _, _, _, _, _, _, _, _, equipLoc = GetItemInfo(link)
+    if not equipLoc or equipLoc == "" then
+        return
+    end
+
+    local baseMastery = tooltipEssenceCache["0:" .. entry .. ":0"]
+    local affixMastery = affixType and
+        tooltipEssenceCache[affixType .. ":" .. entry .. ":" .. affixId]
+
+    tooltip:AddLine("Crucible", 0.38, 0.75, 1)
+    tooltip:AddLine(baseMastery and ("Base mastery: " .. baseMastery .. "%")
+        or "Base: Not absorbed", 0.9, 0.9, 0.9)
+    if affixType then
+        tooltip:AddLine(affixMastery and ("Affix mastery: " .. affixMastery .. "%")
+            or "Affix: Not absorbed", 0.9, 0.9, 0.9)
+    end
+    tooltip:Show()
+end
+
+GameTooltip:HookScript("OnTooltipSetItem", AddCrucibleItemTooltip)
+if ItemRefTooltip then
+    ItemRefTooltip:HookScript("OnTooltipSetItem", AddCrucibleItemTooltip)
+end
 local essenceFilterMastery = 0
 local essenceSearchText = ""
 local essenceDisplayRows = {}
@@ -378,7 +445,7 @@ essenceSearch:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
 
 local function RequestEssences()
     essencesReceiving = false
-    essenceRows = {}
+    incomingTooltipCache = nil
     essenceStatus:SetText("Requesting essences...")
 
     SendAddonMessage(
@@ -948,6 +1015,9 @@ local function HandleResult(resultName, guid)
     end
 
     ResetSlot(RESULT_TEXT[resultName] or ("Server result: " .. tostring(resultName)))
+    if resultName == "SUCCESS" then
+        RequestEssences()
+    end
 end
 
 slot:SetScript("OnReceiveDrag", AcceptCursorItem)
@@ -1215,8 +1285,16 @@ end)
 local listener = CreateFrame("Frame")
 listener:RegisterEvent("CHAT_MSG_ADDON")
 listener:RegisterEvent("BAG_UPDATE")
+listener:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 listener:SetScript("OnEvent", function(self, event, ...)
+    if event == "PLAYER_ENTERING_WORLD" then
+        tooltipCacheReady = false
+        tooltipEssenceCache = {}
+        RequestEssences()
+        return
+    end
+
     if event == "BAG_UPDATE" then
         if selected and selected.guid then
             if RefreshSelectedLocation() then
@@ -1347,6 +1425,7 @@ listener:SetScript("OnEvent", function(self, event, ...)
     if parts[1] == "ESSENCES_BEGIN" then
         essencesReceiving = true
         essenceRows = {}
+        incomingTooltipCache = {}
         return
     end
 
@@ -1368,6 +1447,9 @@ listener:SetScript("OnEvent", function(self, event, ...)
                 affixId = affixId,
                 mastery = mastery,
             })
+            if incomingTooltipCache then
+                incomingTooltipCache[essenceType .. ":" .. entry .. ":" .. affixId] = mastery
+            end
         end
 
         return
@@ -1379,6 +1461,9 @@ listener:SetScript("OnEvent", function(self, event, ...)
         end
 
         essencesReceiving = false
+        tooltipEssenceCache = incomingTooltipCache or {}
+        tooltipCacheReady = true
+        incomingTooltipCache = nil
         RenderEssences()
         return
     end
