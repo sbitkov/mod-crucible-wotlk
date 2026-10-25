@@ -163,7 +163,8 @@ namespace Crucible
     AbsorbResult AbsorbItem(Player* player, Item* item);
 
     // Returns the configured cost for the next mastery step.
-    // v0.5 currently defines economy only for RequiredLevel 1-19.
+    // v0.8 defines economy for progression levels 1-19 and 20-29.
+    // Progression level uses RequiredLevel, falling back to ItemLevel when RequiredLevel is 0.
     bool GetMasteryUpgradeCost(
         ItemTemplate const* proto,
         uint32 currentMastery,
