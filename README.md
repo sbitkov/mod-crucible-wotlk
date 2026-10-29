@@ -100,16 +100,20 @@ Other supported shield stats follow the ordinary mastery progression.
 
 ### Current mastery costs
 
-The current mastery upgrade path is implemented for items with `RequiredLevel` 1–19.
+Mastery upgrades are configured for progression levels 1–39. The progression
+level is the item's `RequiredLevel`, or its `ItemLevel` if `RequiredLevel` is zero.
 
-| Upgrade | Cost |
-|---|---|
-| 20% → 40% | 5 silver |
-| 40% → 60% | 10 silver + 2 Strange Dust |
-| 60% → 80% | 15 silver + 1 Greater Magic Essence |
-| 80% → 100% | 25 silver + 1 Small Glimmering Shard |
+| Upgrade | Levels 1–19 | Levels 20–29 | Levels 30–39 |
+|---|---|---|---|
+| 20% → 40% | 5 silver | 15 silver | 40 silver |
+| 40% → 60% | 10 silver + 2 Strange Dust | 30 silver + 2 Soul Dust | 80 silver + 2 Vision Dust |
+| 60% → 80% | 15 silver + 1 Greater Magic Essence | 45 silver + 1 Greater Astral Essence | 1 gold 20 silver + 1 Greater Mystic Essence |
+| 80% → 100% | 25 silver + 1 Small Glimmering Shard | 75 silver + 1 Small Glowing Shard | 1 gold 60 silver + 1 Large Glowing Shard |
+| **Total money** | **55 silver** | **1 gold 65 silver** | **4 gold** |
 
-This limited level bracket is intentional. It provides a small, ChromieCraft-esque vertical slice in which the progression system can be tested before costs and progression are extended to the rest of the game.
+This staged economy is intentional. Higher brackets are designed and balanced
+individually rather than following an automatic cost multiplier. The reagent
+cost is additional to the listed money cost.
 
 ## User interface
 
@@ -391,8 +395,7 @@ This is useful after manually inspecting or modifying Crucible database records 
 
 Crucible is still an early version of the module, so several limitations currently exist.
 
-- Weapons are not currently supported for absorption.
-- The current mastery upgrade cost progression is implemented only for items with `RequiredLevel` 1–19.
+- Mastery upgrade costs are currently configured for progression levels 1–39; higher brackets are not yet supported.
 - Not every possible WotLK item effect can currently be converted into permanent Crucible progression.
 - Some random affixes therefore produce no supported Crucible contribution.
 - School-specific spell damage bonuses, such as Frost Spell Damage, are not currently absorbed. AzerothCore represents these bonuses through spell-school aura mechanics rather than the normal permanent stat APIs used by Crucible, so support has been deliberately postponed rather than implemented through a fragile workaround.

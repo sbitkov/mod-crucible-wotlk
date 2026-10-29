@@ -470,8 +470,8 @@ public:
 
             case Crucible::MasteryUpgradeResult::UNSUPPORTED_BRACKET:
                 handler->PSendSysMessage(
-                    "Crucible DEBUG: mastery economy is currently implemented only "
-                    "for RequiredLevel 1-19 items. Item {} is outside that bracket.",
+                    "Crucible DEBUG: mastery economy is configured for progression levels "
+                    "1-39 (RequiredLevel, falling back to ItemLevel). Item {} is outside that bracket.",
                     itemEntry
                 );
                 break;
