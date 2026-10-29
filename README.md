@@ -395,8 +395,7 @@ This is useful after manually inspecting or modifying Crucible database records 
 
 Crucible is still an early version of the module, so several limitations currently exist.
 
-- Weapons are not currently supported for absorption.
-- The current mastery upgrade cost progression is implemented only for items with `RequiredLevel` 1–19.
+- Mastery upgrade costs are currently configured for progression levels 1–39; higher brackets are not yet supported.
 - Not every possible WotLK item effect can currently be converted into permanent Crucible progression.
 - Some random affixes therefore produce no supported Crucible contribution.
 - School-specific spell damage bonuses, such as Frost Spell Damage, are not currently absorbed. AzerothCore represents these bonuses through spell-school aura mechanics rather than the normal permanent stat APIs used by Crucible, so support has been deliberately postponed rather than implemented through a fragile workaround.
