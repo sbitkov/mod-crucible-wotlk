@@ -997,6 +997,45 @@ namespace Crucible
             }
         }
 
+        if (progressionLevel >= 30 && progressionLevel <= 39)
+        {
+            switch (currentMastery)
+            {
+                case 20:
+                    // 20% -> 40%: 40 silver.
+                    cost.MoneyCopper = 4000;
+                    cost.NextMastery = 40;
+                    return true;
+
+                case 40:
+                    // 40% -> 60%: 80 silver + 2 Vision Dust.
+                    cost.MoneyCopper = 8000;
+                    cost.ReagentEntry = 11137;
+                    cost.ReagentCount = 2;
+                    cost.NextMastery = 60;
+                    return true;
+
+                case 60:
+                    // 60% -> 80%: 1 gold 20 silver + 1 Greater Mystic Essence.
+                    cost.MoneyCopper = 12000;
+                    cost.ReagentEntry = 11135;
+                    cost.ReagentCount = 1;
+                    cost.NextMastery = 80;
+                    return true;
+
+                case 80:
+                    // 80% -> 100%: 1 gold 60 silver + 1 Large Glowing Shard.
+                    cost.MoneyCopper = 16000;
+                    cost.ReagentEntry = 11139;
+                    cost.ReagentCount = 1;
+                    cost.NextMastery = 100;
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
         return false;
     }
 
