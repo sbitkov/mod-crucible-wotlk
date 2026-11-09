@@ -1040,6 +1040,45 @@ namespace Crucible
             }
         }
 
+        if (progressionLevel >= 40 && progressionLevel <= 49)
+        {
+            switch (currentMastery)
+            {
+                case 20:
+                    // 20% -> 40%: 75 silver.
+                    cost.MoneyCopper = 7500;
+                    cost.NextMastery = 40;
+                    return true;
+
+                case 40:
+                    // 40% -> 60%: 1 gold 50 silver + 2 Dream Dust.
+                    cost.MoneyCopper = 15000;
+                    cost.ReagentEntry = 11176;
+                    cost.ReagentCount = 2;
+                    cost.NextMastery = 60;
+                    return true;
+
+                case 60:
+                    // 60% -> 80%: 2 gold + 1 Greater Nether Essence.
+                    cost.MoneyCopper = 20000;
+                    cost.ReagentEntry = 11175;
+                    cost.ReagentCount = 1;
+                    cost.NextMastery = 80;
+                    return true;
+
+                case 80:
+                    // 80% -> 100%: 2 gold 25 silver + 1 Small Radiant Shard.
+                    cost.MoneyCopper = 22500;
+                    cost.ReagentEntry = 11177;
+                    cost.ReagentCount = 1;
+                    cost.NextMastery = 100;
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
         return false;
     }
 
