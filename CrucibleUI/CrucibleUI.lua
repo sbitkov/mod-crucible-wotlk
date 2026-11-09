@@ -146,11 +146,13 @@ local function CapturePickup(bag, slot)
         return
     end
 
+    local cursorType, cursorEntry, cursorLink = GetCursorInfo()
     pending = {
         bag = bag,
         slot = slot,
         guid = GetGuidAt(bag, slot),
-        link = GetContainerItemLink(bag, slot),
+        entry = cursorType == "item" and tonumber(cursorEntry) or nil,
+        link = GetContainerItemLink(bag, slot) or cursorLink,
     }
 end
 
@@ -776,7 +778,11 @@ local function ApplyReservationVisual()
 
     local location = GetCurrentLocation(selected.guid)
     if not location or location.bagID == nil or location.slotIndex == nil then
-        return
+        location = { bagID = selected.bag, slotIndex = selected.slot }
+        local link = selected.bag and selected.slot and GetContainerItemLink(selected.bag, selected.slot)
+        if not link or tonumber(string.match(link, "item:(%d+)")) ~= selected.entry then
+            return
+        end
     end
 
     selected.currentLocation = location
@@ -815,16 +821,27 @@ local function ResetSlot(status)
 end
 
 local function RefreshSelectedLocation()
-    if not selected or not selected.guid then
+    if not selected then
         return false
     end
 
-    local location = GetCurrentLocation(selected.guid)
-    if not location then
+    local location = selected.guid and GetCurrentLocation(selected.guid)
+    if location and location.bagID ~= nil and location.slotIndex ~= nil then
+        selected.currentLocation = location
+        return true
+    end
+
+    -- Client GetItemLocation/GetItemGUID can be absent or incomplete on 3.3.5a.
+    -- For fallback, use the original slot and verify the expected item entry.
+    if selected.bag == nil or selected.slot == nil or not selected.entry then
+        return false
+    end
+    local link = GetContainerItemLink(selected.bag, selected.slot)
+    if not link or tonumber(string.match(link, "item:(%d+)")) ~= selected.entry then
         return false
     end
 
-    selected.currentLocation = location
+    selected.currentLocation = { bagID = selected.bag, slotIndex = selected.slot }
     return true
 end
 
@@ -949,12 +966,25 @@ local function SetSelection(info)
 
     nameText:SetText(info.link or "Selected item")
 
-    if RefreshSelectedLocation() and info.guid then
+    if info.guid then
+        if not RefreshSelectedLocation() then
+            statusText:SetText("Item no longer available")
+            absorbButton:Disable()
+            return
+        end
         ApplyReservationVisual()
         RequestPreview()
     else
-        statusText:SetText("Item no longer available")
+        -- Resolve the exact item GUID on the server before preview/absorb.
+        statusText:SetText("Identifying item...")
         absorbButton:Disable()
+        SendAddonMessage(
+            ADDON_PREFIX,
+            "RESOLVE_POS\t" .. tostring(info.bag) .. "\t" ..
+                tostring(info.slot) .. "\t" .. tostring(info.entry),
+            "WHISPER",
+            UnitName("player")
+        )
     end
 end
 
@@ -975,7 +1005,7 @@ local function AcceptCursorItem()
         return
     end
 
-    if not pending or not pending.guid then
+    if not pending then
         statusText:SetText("Could not identify item")
         return
     end
@@ -989,6 +1019,12 @@ local function AcceptCursorItem()
     end
 
     info.link = GetContainerItemLink(info.bag, info.slot) or info.link
+    info.entry = info.entry or
+        (info.link and tonumber(string.match(info.link, "item:(%d+)")))
+    if not info.entry then
+        statusText:SetText("Could not identify item entry")
+        return
+    end
     SetSelection(info)
 end
 
@@ -1324,6 +1360,34 @@ listener:SetScript("OnEvent", function(self, event, ...)
     end
 
     local parts = SplitTabs(message)
+
+    if parts[1] == "RESOLVE_RESULT" and
+       parts[2] and parts[3] and parts[4] and parts[5] then
+        local bag, slotIndex, entry =
+            tonumber(parts[2]), tonumber(parts[3]), tonumber(parts[4])
+
+        -- Ignore stale replies, e.g. after selecting another item.
+        if not selected or selected.guid or
+           bag ~= selected.bag or slotIndex ~= selected.slot or
+           entry ~= selected.entry then
+            return
+        end
+
+        if not string.match(parts[5], "^0[xX]%x+$") then
+            statusText:SetText("Could not identify item on server")
+            absorbButton:Disable()
+            return
+        end
+
+        selected.guid = parts[5]
+        if not RefreshSelectedLocation() then
+            ResetSlot("Selected item no longer available")
+            return
+        end
+        ApplyReservationVisual()
+        RequestPreview()
+        return
+    end
 
     if parts[1] == "MASTERY_BEGIN" and
        parts[2] and parts[3] and parts[4] and parts[5] then
