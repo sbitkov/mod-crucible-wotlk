@@ -146,11 +146,13 @@ local function CapturePickup(bag, slot)
         return
     end
 
+    local cursorType, cursorEntry, cursorLink = GetCursorInfo()
     pending = {
         bag = bag,
         slot = slot,
         guid = GetGuidAt(bag, slot),
-        link = GetContainerItemLink(bag, slot),
+        entry = cursorType == "item" and tonumber(cursorEntry) or nil,
+        link = GetContainerItemLink(bag, slot) or cursorLink,
     }
 end
 
@@ -964,10 +966,12 @@ local function SetSelection(info)
 
     nameText:SetText(info.link or "Selected item")
 
-    if not RefreshSelectedLocation() then
-        statusText:SetText("Item no longer available")
-        absorbButton:Disable()
-    elseif info.guid then
+    if info.guid then
+        if not RefreshSelectedLocation() then
+            statusText:SetText("Item no longer available")
+            absorbButton:Disable()
+            return
+        end
         ApplyReservationVisual()
         RequestPreview()
     else
@@ -1015,7 +1019,8 @@ local function AcceptCursorItem()
     end
 
     info.link = GetContainerItemLink(info.bag, info.slot) or info.link
-    info.entry = info.link and tonumber(string.match(info.link, "item:(%d+)"))
+    info.entry = info.entry or
+        (info.link and tonumber(string.match(info.link, "item:(%d+)")))
     if not info.entry then
         statusText:SetText("Could not identify item entry")
         return
