@@ -138,6 +138,28 @@ namespace
                 continue;
             }
 
+            if (type == ITEM_ENCHANTMENT_TYPE_RESISTANCE)
+            {
+                Crucible::StatId stat;
+                using Crucible::StatId;
+                switch (arg)
+                {
+                    case SPELL_SCHOOL_HOLY: stat = StatId::HOLY_RESISTANCE; break;
+                    case SPELL_SCHOOL_FIRE: stat = StatId::FIRE_RESISTANCE; break;
+                    case SPELL_SCHOOL_NATURE: stat = StatId::NATURE_RESISTANCE; break;
+                    case SPELL_SCHOOL_FROST: stat = StatId::FROST_RESISTANCE; break;
+                    case SPELL_SCHOOL_SHADOW: stat = StatId::SHADOW_RESISTANCE; break;
+                    case SPELL_SCHOOL_ARCANE: stat = StatId::ARCANE_RESISTANCE; break;
+                    default: continue;
+                }
+
+                float sourceValue = float(enchant->amount[effectIndex]);
+                if (sourceValue == 0.0f && suffixScaledValue != 0.0f)
+                    sourceValue = suffixScaledValue;
+
+                AddContribution(contributions, stat, sourceValue);
+                continue;
+            }
         }
     }
 
