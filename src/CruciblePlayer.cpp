@@ -357,6 +357,63 @@ namespace
         return true;
     }
 
+    bool TryParseBagItemRequest(std::string_view text, uint32& clientBag, uint32& clientSlot, uint32& expectedEntry)
+    {
+        std::size_t first = text.find('\t');
+        if (first == std::string_view::npos)
+            return false;
+        std::size_t second = text.find('\t', first + 1);
+        if (second == std::string_view::npos || text.find('\t', second + 1) != std::string_view::npos)
+            return false;
+
+        if (!TryParseUint32(text.substr(0, first), clientBag) ||
+            !TryParseUint32(text.substr(first + 1, second - first - 1), clientSlot) ||
+            !TryParseUint32(text.substr(second + 1), expectedEntry))
+            return false;
+
+        if (clientBag > 4 || clientSlot == 0 || expectedEntry == 0)
+            return false;
+
+        // WoW bag slots are 1-based. The backpack has 16 slots.
+        // Additional equipped bags are bounded by the maximum bag capacity.
+        return clientBag == 0 ? clientSlot <= 16 : clientSlot <= 36;
+    }
+
+    Item* ResolvePlayerItemByBagPosition(Player* player, uint32 clientBag, uint32 clientSlot, uint32 expectedEntry)
+    {
+        if (!player || clientBag > 4 || clientSlot == 0 || expectedEntry == 0 ||
+            (clientBag == 0 && clientSlot > 16) || (clientBag != 0 && clientSlot > 36))
+            return nullptr;
+
+        // Client bag 0 is the backpack, whose server slots start at 23.
+        // Client bags 1..4 are equipped bags at server slots 19..22.
+        uint8 serverBag = clientBag == 0
+            ? INVENTORY_SLOT_BAG_0
+            : static_cast<uint8>(INVENTORY_SLOT_BAG_START + clientBag - 1);
+        uint8 serverSlot = clientBag == 0
+            ? static_cast<uint8>(INVENTORY_SLOT_ITEM_START + clientSlot - 1)
+            : static_cast<uint8>(clientSlot - 1);
+
+        Item* item = player->GetItemByPos(serverBag, serverSlot);
+        return item && item->GetEntry() == expectedEntry && !item->IsInTrade()
+            ? item : nullptr;
+    }
+
+    void SendPositionResolveResult(Player* player, uint32 bag, uint32 slot, uint32 entry, Item* item)
+    {
+        if (!player)
+            return;
+
+        std::string identifier = item
+            ? fmt::format("0x{:016X}", item->GetGUID().GetRawValue())
+            : "ITEM_NOT_FOUND";
+
+        player->Whisper(
+            fmt::format("CRUCIBLE\tRESOLVE_RESULT\t{}\t{}\t{}\t{}",
+                bag, slot, entry, identifier),
+            LANG_ADDON, player);
+    }
+
     void SendMasteryPreview(Player* player, EssenceIdentity const& identity)
     {
         if (!player)
@@ -587,6 +644,23 @@ public:
                 "Crucible transport: player='{}' type={} command='PING'",
                 player->GetName(),
                 type);
+            return;
+        }
+
+        if (command == "RESOLVE_POS")
+        {
+            uint32 bag = 0, slot = 0, entry = 0;
+            if (!TryParseBagItemRequest(argument, bag, slot, entry))
+            {
+                // Do not turn malformed requests into an inventory lookup.
+                LOG_WARN("module.crucible",
+                    "Crucible RESOLVE_POS: player='{}' invalid position request",
+                    player->GetName());
+                return;
+            }
+
+            Item* item = ResolvePlayerItemByBagPosition(player, bag, slot, entry);
+            SendPositionResolveResult(player, bag, slot, entry, item);
             return;
         }
 
