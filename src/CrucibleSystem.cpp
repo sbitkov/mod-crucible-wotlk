@@ -13,6 +13,10 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <map>
 #include <unordered_map>
 
 namespace
@@ -1192,39 +1196,112 @@ namespace Crucible
         if (!player)
             return;
 
-        Unapply(player);
-
         uint32 guid = player->GetGUID().GetCounter();
 
+        // The anchor row makes an empty contribution set distinguishable from a
+        // failed query: an empty set returns one row with NULL stat_id, whereas
+        // a failed query returns no QueryResult. Never alter live stats on failure.
         QueryResult result = CharacterDatabase.Query(
-            "SELECT stat_id, SUM(absorbed_value) "
-            "FROM character_crucible_contribution "
-            "WHERE guid = {} "
-            "GROUP BY stat_id "
-            "ORDER BY stat_id",
+            "SELECT totals.stat_id, totals.total "
+            "FROM (SELECT 1 AS anchor) AS sentinel "
+            "LEFT JOIN ("
+            "  SELECT stat_id, SUM(absorbed_value) AS total "
+            "  FROM character_crucible_contribution "
+            "  WHERE guid = {} "
+            "  GROUP BY stat_id"
+            ") AS totals ON 1 = 1 "
+            "ORDER BY totals.stat_id",
             guid
         );
 
-        std::vector<AppliedStat> appliedStats;
-
-        if (result)
+        if (!result)
         {
-            do
-            {
-                Field* fields = result->Fetch();
-
-                StatId stat = static_cast<StatId>(fields[0].Get<uint16>());
-                float stored = fields[1].Get<float>();
-                int32 amount = static_cast<int32>(stored);
-
-                if (amount == 0)
-                    continue;
-
-                ApplyStat(player, stat, amount, true);
-                appliedStats.push_back({ stat, amount });
-            }
-            while (result->NextRow());
+            LOG_ERROR("module", "Crucible: recalculate aborted for player {}: contribution query failed", guid);
+            return;
         }
+
+        std::map<StatId, int32> desired;
+        do
+        {
+            Field* fields = result->Fetch();
+            if (fields[0].IsNull())
+                continue; // Valid empty contribution set.
+
+            uint16 rawStat = fields[0].Get<uint16>();
+            if (rawStat < static_cast<uint16>(StatId::STRENGTH) ||
+                rawStat > static_cast<uint16>(StatId::ARCANE_SPELL_POWER) ||
+                fields[1].IsNull())
+            {
+                LOG_ERROR("module", "Crucible: recalculate aborted for player {}: invalid contribution row", guid);
+                return;
+            }
+
+            float stored = fields[1].Get<float>();
+            if (!std::isfinite(stored) ||
+                stored < static_cast<float>(std::numeric_limits<int32>::min()) ||
+                static_cast<double>(stored) >= 2147483648.0)
+            {
+                LOG_ERROR("module", "Crucible: recalculate aborted for player {}: invalid contribution total for stat {}", guid, rawStat);
+                return;
+            }
+
+            int32 amount = static_cast<int32>(stored);
+            if (amount != 0)
+                desired.emplace(static_cast<StatId>(rawStat), amount);
+        }
+        while (result->NextRow());
+
+        std::map<StatId, int32> current;
+        auto itr = sAppliedStats.find(guid);
+        if (itr != sAppliedStats.end())
+        {
+            for (AppliedStat const& applied : itr->second)
+                current[applied.Stat] = applied.Amount;
+        }
+
+        // Apply only actual changes. In particular, never temporarily remove
+        // Stamina/Intellect when their accumulated values have not changed.
+        for (auto const& entry : current)
+        {
+            int32 next = 0;
+            auto found = desired.find(entry.first);
+            if (found != desired.end())
+                next = found->second;
+
+            int64 delta = static_cast<int64>(next) - entry.second;
+            if (delta != 0)
+            {
+                // Handle the whole int32 range without overflow.
+                bool add = delta > 0;
+                uint64 remaining = delta > 0 ? static_cast<uint64>(delta) : static_cast<uint64>(-delta);
+                while (remaining)
+                {
+                    int32 step = static_cast<int32>(std::min<uint64>(remaining, std::numeric_limits<int32>::max()));
+                    ApplyStat(player, entry.first, step, add);
+                    remaining -= step;
+                }
+            }
+        }
+        for (auto const& entry : desired)
+        {
+            if (current.find(entry.first) != current.end())
+                continue;
+
+            int64 delta = entry.second;
+            bool add = delta > 0;
+            uint64 remaining = delta > 0 ? static_cast<uint64>(delta) : static_cast<uint64>(-delta);
+            while (remaining)
+            {
+                int32 step = static_cast<int32>(std::min<uint64>(remaining, std::numeric_limits<int32>::max()));
+                ApplyStat(player, entry.first, step, add);
+                remaining -= step;
+            }
+        }
+
+        std::vector<AppliedStat> appliedStats;
+        appliedStats.reserve(desired.size());
+        for (auto const& entry : desired)
+            appliedStats.push_back({ entry.first, entry.second });
 
         sAppliedStats[guid] = std::move(appliedStats);
     }

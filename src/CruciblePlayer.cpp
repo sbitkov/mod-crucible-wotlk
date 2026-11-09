@@ -7,11 +7,13 @@
 #include "ObjectMgr.h"
 #include "ItemTemplate.h"
 #include "Player.h"
+#include "QueryResult.h"
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <string>
@@ -512,7 +514,48 @@ public:
 
     void OnPlayerLogin(Player* player) override
     {
+        if (!player)
+            return;
+
+        // AzerothCore's Player::LoadFromDB clamps persisted health to the
+        // pre-Crucible maximum before PLAYERHOOK_ON_LOGIN is dispatched.
+        // Only undo that specific clamp; do not heal players whose saved HP
+        // was already below the vanilla maximum.
+        uint32 oldMaxHealth = player->GetMaxHealth();
+        uint32 oldHealth = player->GetHealth();
+        uint32 savedHealth = 0;
+        bool healthWasClamped = false;
+
+        if (player->IsAlive() && oldHealth == oldMaxHealth)
+        {
+            uint32 guid = player->GetGUID().GetCounter();
+            QueryResult result = CharacterDatabase.Query(
+                "SELECT health FROM characters WHERE guid = {}", guid);
+
+            if (result && !result->Fetch()[0].IsNull())
+            {
+                savedHealth = result->Fetch()[0].Get<uint32>();
+                healthWasClamped = savedHealth > oldMaxHealth;
+            }
+            else
+            {
+                // Do not guess a saved HP value if it cannot be read.
+                LOG_WARN("module.crucible", "Crucible: cannot read saved health on login for player {}", guid);
+            }
+        }
+
         Crucible::Recalculate(player);
+
+        if (healthWasClamped && player->IsAlive() &&
+            player->GetHealth() == oldHealth && player->GetMaxHealth() > oldMaxHealth)
+        {
+            // Recalculate may have restored Crucible Stamina, increasing max
+            // health. Restore the saved absolute HP, never above the new max.
+            // If Recalculate failed or did not raise max HP, do nothing.
+            uint32 restoredHealth = std::min(savedHealth, player->GetMaxHealth());
+            if (restoredHealth > player->GetHealth())
+                player->SetHealth(restoredHealth);
+        }
     }
 
     void OnPlayerLogout(Player* player) override
