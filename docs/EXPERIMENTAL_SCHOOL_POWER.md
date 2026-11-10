@@ -16,9 +16,9 @@ The Crucible module relies on this server hook and **will not build against an u
 2. In a PowerShell terminal, from `C:\Azerothcore\modules\mod-crucible`:
    ```powershell
    git fetch origin experimental/school-specific-spell-power
-   git restore --source=origin/experimental/school-specific-spell-power -- src/CrucibleSystem.cpp src/CrucibleSystem.h src/CruciblePlayer.cpp
+   git restore --source=origin/experimental/school-specific-spell-power -- src/CrucibleSystem.cpp src/CrucibleSystem.h src/CruciblePlayer.cpp patches/azerothcore-school-spell-power-hook.patch
    ```
-3. Copy the patch from the experimental branch to `C:\Azerothcore\modules\mod-crucible\patches\azerothcore-school-spell-power-hook.patch` (or use the raw GitHub patch URL).
+3. The command above also restores the core patch into the module's `patches` folder.
 4. From `C:\Azerothcore`, first check and only then apply:
    ```powershell
    git apply --check modules/mod-crucible/patches/azerothcore-school-spell-power-hook.patch
