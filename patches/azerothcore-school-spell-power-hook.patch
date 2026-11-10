@@ -1,0 +1,54 @@
+diff --git a/src/server/game/Scripting/ScriptDefines/UnitScript.h b/src/server/game/Scripting/ScriptDefines/UnitScript.h
+--- a/src/server/game/Scripting/ScriptDefines/UnitScript.h
++++ b/src/server/game/Scripting/ScriptDefines/UnitScript.h
+@@ -46,6 +46,7 @@ enum UnitHook
+     UNITHOOK_ON_UNIT_DEATH,
+     UNITHOOK_ON_UNIT_SET_SHAPESHIFT_FORM,
++    UNITHOOK_MODIFY_SPELL_BASE_DAMAGE_BONUS_DONE,
+     UNITHOOK_END
+ };
+@@ -72,6 +73,9 @@ public:
+     // Called when Spell Damage is being Dealt
+     virtual void ModifySpellDamageTaken(Unit* /*target*/, Unit* /*attacker*/, int32& /*damage*/, SpellInfo const* /*spellInfo*/) { }
+ 
++    // Adjust advertised spell damage before coefficients (no additional auras).
++    virtual void ModifySpellBaseDamageBonusDone(Unit const* /*caster*/, uint32 /*schoolMask*/, int32& /*bonus*/) { }
++
+     // Called when Heal is Recieved
+     virtual void ModifyHealReceived(Unit* /*target*/, Unit* /*healer*/, uint32& /*heal*/, SpellInfo const* /*spellInfo*/) { }
+diff --git a/src/server/game/Scripting/ScriptDefines/UnitScript.cpp b/src/server/game/Scripting/ScriptDefines/UnitScript.cpp
+--- a/src/server/game/Scripting/ScriptDefines/UnitScript.cpp
++++ b/src/server/game/Scripting/ScriptDefines/UnitScript.cpp
+@@ -40,6 +40,12 @@ void ScriptMgr::ModifySpellDamageTaken(Unit* target, Unit* attacker, int32& damage, SpellInfo const* spellInfo)
+     CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_MODIFY_SPELL_DAMAGE_TAKEN, script->ModifySpellDamageTaken(target, attacker, damage, spellInfo));
+ }
+ 
++void ScriptMgr::ModifySpellBaseDamageBonusDone(Unit const* caster, uint32 schoolMask, int32& bonus)
++{
++    CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_MODIFY_SPELL_BASE_DAMAGE_BONUS_DONE,
++        script->ModifySpellBaseDamageBonusDone(caster, schoolMask, bonus));
++}
++
+ void ScriptMgr::ModifyHealReceived(Unit* target, Unit* healer, uint32& heal, SpellInfo const* spellInfo)
+ {
+     CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_MODIFY_HEAL_RECEIVED, script->ModifyHealReceived(target, healer, heal, spellInfo));
+diff --git a/src/server/game/Scripting/ScriptMgr.h b/src/server/game/Scripting/ScriptMgr.h
+--- a/src/server/game/Scripting/ScriptMgr.h
++++ b/src/server/game/Scripting/ScriptMgr.h
+@@ -649,6 +649,7 @@ public: /* UnitScript */
+     void ModifyMeleeDamage(Unit* target, Unit* attacker, uint32& damage);
+     void ModifySpellDamageTaken(Unit* target, Unit* attacker, int32& damage, SpellInfo const* spellInfo);
++    void ModifySpellBaseDamageBonusDone(Unit const* caster, uint32 schoolMask, int32& bonus);
+     void ModifyHealReceived(Unit* target, Unit* healer, uint32& addHealth, SpellInfo const* spellInfo);
+     uint32 DealDamage(Unit* AttackerUnit, Unit* pVictim, uint32 damage, DamageEffectType damagetype);
+diff --git a/src/server/game/Entities/Unit/Unit.cpp b/src/server/game/Entities/Unit/Unit.cpp
+--- a/src/server/game/Entities/Unit/Unit.cpp
++++ b/src/server/game/Entities/Unit/Unit.cpp
+@@ -9048,6 +9048,9 @@ int32 Unit::SpellBaseDamageBonusDone(SpellSchoolMask schoolMask)
+         DoneAdvertisedBenefit += int32(CalculatePct(GetTotalAttackPowerValue(BASE_ATTACK), GetTotalAuraModifierByMiscMask(SPELL_AURA_MOD_SPELL_DAMAGE_OF_ATTACK_POWER, schoolMask)));
+     }
++    // Allow modules to inject school-specific power before spell coefficients.
++    sScriptMgr->ModifySpellBaseDamageBonusDone(this, uint32(schoolMask), DoneAdvertisedBenefit);
++
+     return DoneAdvertisedBenefit;
+ }
