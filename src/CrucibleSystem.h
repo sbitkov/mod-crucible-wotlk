@@ -190,5 +190,9 @@ namespace Crucible
     // Do not modify stats here; the Player object is being destroyed anyway.
     void ForgetSession(Player* player);
 
+    // Used by the optional AzerothCore pre-coefficient school power hook.
+    // Returns the active, already-rounded Crucible bonus for a school mask.
+    int32 GetSchoolSpellPowerBonus(Player const* player, uint32 schoolMask);
+
     bool IsApplied(Player* player);
 }
