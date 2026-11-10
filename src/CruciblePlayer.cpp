@@ -890,7 +890,30 @@ public:
     }
 };
 
+// This hook requires the matching optional AzerothCore server patch.
+// It runs before spell coefficients, preserving native direct/DoT scaling.
+class CrucibleSchoolPowerScript : public UnitScript
+{
+public:
+    CrucibleSchoolPowerScript()
+        : UnitScript("CrucibleSchoolPowerScript", true,
+              { UNITHOOK_MODIFY_SPELL_BASE_DAMAGE_BONUS_DONE })
+    {
+    }
+
+    void ModifySpellBaseDamageBonusDone(
+        Unit const* caster, uint32 schoolMask, int32& advertisedBenefit) override
+    {
+        if (!caster || caster->GetTypeId() != TYPEID_PLAYER)
+            return;
+
+        advertisedBenefit += Crucible::GetSchoolSpellPowerBonus(
+            caster->ToPlayer(), schoolMask);
+    }
+};
+
 void AddCruciblePlayerScripts()
 {
     new CruciblePlayerScript();
+    new CrucibleSchoolPowerScript();
 }
