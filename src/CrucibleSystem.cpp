@@ -138,6 +138,44 @@ namespace
                 continue;
             }
 
+            // School-specific spell damage on random property/suffix equipment
+            // is represented as an equip spell, not ITEM_ENCHANTMENT_TYPE_STAT.
+            // Keep it distinct from generic SPELL_POWER.
+            if (type == ITEM_ENCHANTMENT_TYPE_EQUIP_SPELL)
+            {
+                SpellInfo const* spell = sSpellMgr->GetSpellInfo(arg);
+                if (!spell)
+                    continue;
+
+                for (uint8 spellEffIndex = 0; spellEffIndex < MAX_SPELL_EFFECTS; ++spellEffIndex)
+                {
+                    SpellEffectInfo const& effect = spell->Effects[spellEffIndex];
+                    if (effect.Effect != SPELL_EFFECT_APPLY_AURA ||
+                        effect.ApplyAuraName != SPELL_AURA_MOD_DAMAGE_DONE)
+                        continue;
+
+                    Crucible::StatId schoolStat;
+                    switch (uint32(effect.MiscValue))
+                    {
+                        case SPELL_SCHOOL_MASK_HOLY: schoolStat = Crucible::StatId::HOLY_SPELL_POWER; break;
+                        case SPELL_SCHOOL_MASK_FIRE: schoolStat = Crucible::StatId::FIRE_SPELL_POWER; break;
+                        case SPELL_SCHOOL_MASK_NATURE: schoolStat = Crucible::StatId::NATURE_SPELL_POWER; break;
+                        case SPELL_SCHOOL_MASK_FROST: schoolStat = Crucible::StatId::FROST_SPELL_POWER; break;
+                        case SPELL_SCHOOL_MASK_SHADOW: schoolStat = Crucible::StatId::SHADOW_SPELL_POWER; break;
+                        case SPELL_SCHOOL_MASK_ARCANE: schoolStat = Crucible::StatId::ARCANE_SPELL_POWER; break;
+                        default: continue; // No physical/multi-school/general damage.
+                    }
+
+                    // On suffix items the actual power is derived from the
+                    // instance suffix factor; the DBC spell supplies its school.
+                    float sourceValue = suffixScaledValue != 0.0f
+                        ? suffixScaledValue
+                        : float(effect.CalcValue());
+                    AddContribution(contributions, schoolStat, sourceValue);
+                }
+                continue;
+            }
+
             if (type == ITEM_ENCHANTMENT_TYPE_RESISTANCE)
             {
                 Crucible::StatId stat;
@@ -320,8 +358,9 @@ namespace
             case StatId::FROST_SPELL_POWER:
             case StatId::SHADOW_SPELL_POWER:
             case StatId::ARCANE_SPELL_POWER:
-                // Reserved for future school-specific spell power support.
-                // These values are intentionally not applied in v0.7.
+                // School-specific spell power is read by the optional
+                // AzerothCore pre-coefficient hook from sAppliedStats.
+                // Never add it to generic spell power or cast a shared item aura.
                 break;
         }
     }
@@ -1373,6 +1412,35 @@ namespace Crucible
             return;
 
         sAppliedStats.erase(player->GetGUID().GetCounter());
+    }
+
+    int32 GetSchoolSpellPowerBonus(Player const* player, uint32 schoolMask)
+    {
+        if (!player)
+            return 0;
+
+        auto itr = sAppliedStats.find(player->GetGUID().GetCounter());
+        if (itr == sAppliedStats.end())
+            return 0;
+
+        int32 bonus = 0;
+        for (AppliedStat const& applied : itr->second)
+        {
+            uint32 mask = 0;
+            switch (applied.Stat)
+            {
+                case StatId::HOLY_SPELL_POWER: mask = SPELL_SCHOOL_MASK_HOLY; break;
+                case StatId::FIRE_SPELL_POWER: mask = SPELL_SCHOOL_MASK_FIRE; break;
+                case StatId::NATURE_SPELL_POWER: mask = SPELL_SCHOOL_MASK_NATURE; break;
+                case StatId::FROST_SPELL_POWER: mask = SPELL_SCHOOL_MASK_FROST; break;
+                case StatId::SHADOW_SPELL_POWER: mask = SPELL_SCHOOL_MASK_SHADOW; break;
+                case StatId::ARCANE_SPELL_POWER: mask = SPELL_SCHOOL_MASK_ARCANE; break;
+                default: continue;
+            }
+            if (mask & schoolMask)
+                bonus += applied.Amount;
+        }
+        return bonus;
     }
 
     bool IsApplied(Player* player)
