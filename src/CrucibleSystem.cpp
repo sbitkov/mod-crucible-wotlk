@@ -18,6 +18,7 @@
 #include <limits>
 #include <map>
 #include <unordered_map>
+#include <utility>
 
 namespace
 {
@@ -104,6 +105,139 @@ namespace
         contribution.Coefficient = Crucible::BASE_COEFFICIENT;
         contribution.AbsorbedValue = sourceValue * contribution.Coefficient;
         contributions.push_back(contribution);
+    }
+
+    // Only deterministic, permanently active item equip auras are eligible.
+    // A rating aura contains a CombatRating *bitmask*, not an ItemMod ID.
+    // Map exact masks to avoid silently granting unsupported partial bonuses.
+    bool TryMapEquipAuraStat(SpellEffectInfo const& effect, Crucible::StatId& stat)
+    {
+        using Crucible::StatId;
+
+        if (effect.Effect != SPELL_EFFECT_APPLY_AURA)
+            return false;
+
+        switch (effect.ApplyAuraName)
+        {
+            case SPELL_AURA_MOD_STAT:
+                switch (effect.MiscValue)
+                {
+                    case STAT_STRENGTH: stat = StatId::STRENGTH; return true;
+                    case STAT_AGILITY: stat = StatId::AGILITY; return true;
+                    case STAT_STAMINA: stat = StatId::STAMINA; return true;
+                    case STAT_INTELLECT: stat = StatId::INTELLECT; return true;
+                    case STAT_SPIRIT: stat = StatId::SPIRIT; return true;
+                    default: return false; // e.g. all stats: preserve explicit semantics only.
+                }
+
+            case SPELL_AURA_MOD_RATING:
+            {
+                const uint32 mask = static_cast<uint32>(effect.MiscValue);
+                const uint32 meleeCrit = 1u << CR_CRIT_MELEE;
+                const uint32 rangedCrit = 1u << CR_CRIT_RANGED;
+                const uint32 spellCrit = 1u << CR_CRIT_SPELL;
+                const uint32 meleeHit = 1u << CR_HIT_MELEE;
+                const uint32 rangedHit = 1u << CR_HIT_RANGED;
+                const uint32 spellHit = 1u << CR_HIT_SPELL;
+                const uint32 meleeHaste = 1u << CR_HASTE_MELEE;
+                const uint32 rangedHaste = 1u << CR_HASTE_RANGED;
+                const uint32 spellHaste = 1u << CR_HASTE_SPELL;
+
+                switch (mask)
+                {
+                    case 1u << CR_DEFENSE_SKILL: stat = StatId::DEFENSE_RATING; return true;
+                    case 1u << CR_DODGE: stat = StatId::DODGE_RATING; return true;
+                    case 1u << CR_PARRY: stat = StatId::PARRY_RATING; return true;
+                    case 1u << CR_BLOCK: stat = StatId::BLOCK_RATING; return true;
+                    case 1u << CR_EXPERTISE: stat = StatId::EXPERTISE_RATING; return true;
+                    case 1u << CR_ARMOR_PENETRATION: stat = StatId::ARMOR_PENETRATION_RATING; return true;
+                    default: break;
+                }
+
+                if (mask == meleeCrit) { stat = StatId::CRIT_MELEE_RATING; return true; }
+                if (mask == rangedCrit) { stat = StatId::CRIT_RANGED_RATING; return true; }
+                if (mask == spellCrit) { stat = StatId::CRIT_SPELL_RATING; return true; }
+                if (mask == (meleeCrit | rangedCrit | spellCrit)) { stat = StatId::CRIT_RATING; return true; }
+
+                if (mask == meleeHit) { stat = StatId::HIT_MELEE_RATING; return true; }
+                if (mask == rangedHit) { stat = StatId::HIT_RANGED_RATING; return true; }
+                if (mask == spellHit) { stat = StatId::HIT_SPELL_RATING; return true; }
+                if (mask == (meleeHit | rangedHit | spellHit)) { stat = StatId::HIT_RATING; return true; }
+
+                if (mask == meleeHaste) { stat = StatId::HASTE_MELEE_RATING; return true; }
+                if (mask == rangedHaste) { stat = StatId::HASTE_RANGED_RATING; return true; }
+                if (mask == spellHaste) { stat = StatId::HASTE_SPELL_RATING; return true; }
+                if (mask == (meleeHaste | rangedHaste | spellHaste)) { stat = StatId::HASTE_RATING; return true; }
+                return false;
+            }
+
+            case SPELL_AURA_MOD_ATTACK_POWER:
+                stat = StatId::ATTACK_POWER;
+                return true;
+            case SPELL_AURA_MOD_RANGED_ATTACK_POWER:
+                stat = StatId::RANGED_ATTACK_POWER;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    void ExtractEquipSpellContributions(
+        ItemTemplate const* proto,
+        std::vector<Crucible::Contribution>& contributions)
+    {
+        for (auto const& itemSpell : proto->Spells)
+        {
+            if (itemSpell.SpellId <= 0 ||
+                itemSpell.SpellTrigger != ITEM_SPELLTRIGGER_ON_EQUIP)
+                continue;
+
+            SpellInfo const* spell = sSpellMgr->GetSpellInfo(
+                static_cast<uint32>(itemSpell.SpellId));
+            if (!spell)
+                continue;
+
+            // Fail closed: if one of the spell's effects is a proc, conditional
+            // aura or otherwise unrecognized, do not extract *any* of it.
+            std::vector<std::pair<Crucible::StatId, float>> fixedStats;
+            bool supported = true;
+            for (SpellEffectInfo const& effect : spell->Effects)
+            {
+                if (!effect.IsEffect())
+                    continue;
+
+                Crucible::StatId stat;
+                if (!TryMapEquipAuraStat(effect, stat))
+                {
+                    supported = false;
+                    break;
+                }
+
+                // Avoid level/combo/random-value effects: an item essence
+                // must record a fixed and reproducible source amount.
+                if (effect.RealPointsPerLevel != 0.0f ||
+                    effect.PointsPerComboPoint != 0.0f ||
+                    effect.DieSides > 1)
+                {
+                    supported = false;
+                    break;
+                }
+
+                const int32 amount = effect.CalcValue();
+                if (amount <= 0)
+                {
+                    supported = false;
+                    break;
+                }
+                fixedStats.emplace_back(stat, float(amount));
+            }
+
+            if (!supported || fixedStats.empty())
+                continue;
+
+            for (auto const& entry : fixedStats)
+                AddContribution(contributions, entry.first, entry.second);
+        }
     }
 
     void ExtractEnchantContributions(
@@ -683,6 +817,10 @@ namespace Crucible
             if (TryMapItemMod(itemMod, stat))
                 AddContribution(contributions, stat, float(sourceValue));
         }
+
+        // Base-item Equip: passive stats belong to the BASE essence, not
+        // the item's independently mastered random property or suffix.
+        ExtractEquipSpellContributions(proto, contributions);
 
         if (proto->Class == ITEM_CLASS_ARMOR &&
             proto->SubClass == ITEM_SUBCLASS_ARMOR_SHIELD)
