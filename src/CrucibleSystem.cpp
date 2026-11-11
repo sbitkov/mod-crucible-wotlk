@@ -18,6 +18,7 @@
 #include <limits>
 #include <map>
 #include <unordered_map>
+#include <utility>
 
 namespace
 {
@@ -207,6 +208,16 @@ namespace
 
                 Crucible::StatId stat;
                 if (!TryMapEquipAuraStat(effect, stat))
+                {
+                    supported = false;
+                    break;
+                }
+
+                // Avoid level/combo/random-value effects: an item essence
+                // must record a fixed and reproducible source amount.
+                if (effect.RealPointsPerLevel != 0.0f ||
+                    effect.PointsPerComboPoint != 0.0f ||
+                    effect.DieSides > 1)
                 {
                     supported = false;
                     break;
