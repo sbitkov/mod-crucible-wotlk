@@ -20,9 +20,9 @@ Unrecognized effects, multi-effect spells containing unknown effects, nonpositiv
 1. Before reinstalling, inspect local uncommitted modifications to `src/CrucibleSystem.cpp`. If you currently have the experimental school-specific Spell Power branch installed, save it first. This fix is based on `main` and restoring the file from this branch replaces your local experimental school-power extraction.
 2. Restore only `src/CrucibleSystem.cpp` from this branch; do not touch the local AzerothCore core hook or the other files.
 3. Build the server and replace the running worldserver binary after shutdown.
-4. Create a **new physical** Ornate Mithril Helm (7937) and open Crucible preview **without absorbing it**. Expected +2.8 Crit Rating in preview.
+4. **Important:** Crucible keys an already absorbed BASE essence by item entry. Because your existing character already absorbed Ornate Mithril Helm (7937), a second physical copy on that character will show `ALREADY_ABSORBED` and will not preview a new BASE contribution. Test on a **fresh test character** that has never absorbed item 7937 (and meets item eligibility), or choose another unabsorbed item using Equip spell 7597. On the fresh character, preview the helm **without absorbing it**. Expected +2.8 Crit Rating.
 5. Verify On Use and proc items do not suddenly display proc effects as permanent stats; also verify a normal `ItemStat[]` item continues to preview correctly.
-6. Once preview is correct, absorb the new test item and verify critical-rating increase (allow for summation and integer truncation when calculating applied rating); test recalc and relog.
+6. Once preview is correct, absorb the new item on the fresh test character and verify critical-rating increase (allow for summation and integer truncation when calculating applied rating); test recalc and relog.
 
 **Existing absorbed items are not migrated or backfilled.** Their per-item contribution snapshots remain unchanged. Plan safe backfill separately after gameplay tests, respecting per-essence Mastery and avoiding double credit.
 
