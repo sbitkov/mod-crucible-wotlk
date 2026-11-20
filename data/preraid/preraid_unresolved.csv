@@ -1,0 +1,7 @@
+item_entry,item_name,issue,planned_resolution
+,UBRS trash drops,Map 229 contains both upper and lower wings,Classify upper wing NPC spawns and their loot templates using local AzerothCore coordinates
+,UBRS gameobject containers,Gameobject drops not covered by boss seed SQL,Identify relevant upper wing chests and gameobject loot in local DB
+,All remaining class/spec BiS,Only Warrior DPS guide sampled so far,Audit all class and specialization primary tables for Classic Era Phase 6
+,Phase 6 scope,Classic Era Phase 6 is a working baseline not final user-approved phase,Confirm source era and phase and document each guide revision
+,Affix-specific entries,Random suffixed items may share ItemEntry even when guides specify a suffix,Keep item-level tariff while recording suffix-specific guide evidence
+,Reagent progression,For 50-59 only total 9g50s was approved; step prices and materials proposed,Obtain in-game balance confirmation before main
