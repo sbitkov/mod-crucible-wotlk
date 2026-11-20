@@ -1239,6 +1239,47 @@ namespace Crucible
             }
         }
 
+        // Vanilla endgame leveling. Pre-Raid classification is a separate
+        // ItemEntry-based tier and is intentionally NOT inferred here.
+        if (progressionLevel >= 50 && progressionLevel <= 59)
+        {
+            switch (currentMastery)
+            {
+                case 20:
+                    // 20% -> 40%: 1 gold.
+                    cost.MoneyCopper = 10000;
+                    cost.NextMastery = 40;
+                    return true;
+
+                case 40:
+                    // 40% -> 60%: 2 gold + 2 Illusion Dust.
+                    cost.MoneyCopper = 20000;
+                    cost.ReagentEntry = 16204;
+                    cost.ReagentCount = 2;
+                    cost.NextMastery = 60;
+                    return true;
+
+                case 60:
+                    // 60% -> 80%: 3 gold + 1 Greater Eternal Essence.
+                    cost.MoneyCopper = 30000;
+                    cost.ReagentEntry = 16203;
+                    cost.ReagentCount = 1;
+                    cost.NextMastery = 80;
+                    return true;
+
+                case 80:
+                    // 80% -> 100%: 3 gold 50 silver + 1 Large Brilliant Shard.
+                    cost.MoneyCopper = 35000;
+                    cost.ReagentEntry = 14344;
+                    cost.ReagentCount = 1;
+                    cost.NextMastery = 100;
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
         return false;
     }
 
